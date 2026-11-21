@@ -18,25 +18,24 @@ class SwapStatus(str, enum.Enum):
     Swap lifecycle. The worker is the only writer after PENDING; every transition is
     a compare-and-set on the current status (see worker._transition).
 
-        PENDING ──(invoice ACCEPTED)──► FUNDING ──(tx signed, persisted)──► SIGNED
-           │                              │                                  │
-           │                              └──────► CANCELING ◄───────────────┤
-           │                                          │                      │ (invoice settled:
-           ▼                                          ▼                      ▼  LN money is ours)
-        EXPIRED (never paid)                       FAILED (refunded)        PAID
-                                                                             │ (publish stored tx;
-                                                                             ▼  idempotent retry)
-                                                                         BROADCASTED
+        PENDING ──(invoice ACCEPTED)──► SETTLING ──(invoice SETTLED)──► PAID ──(tx signed, stored)──► SIGNED ──► BROADCASTED
+           │                              │  only checks on-chain balance     │                          (publish stored tx,
+           │                              │  + CLTV margin, then settles      │ funds + signs only now      idempotent retry)
+           ▼                              ▼
+        EXPIRED (never paid)           CANCELING ──► FAILED (hold invoice canceled: payer keeps their sats)
+
+        From PAID on, the operator holds the payer's money: failures there are never
+        refunded automatically, they go to MANUAL_REVIEW.
 
         MANUAL_REVIEW: an invariant protecting funds broke. Service halts and refuses
                        to start until an operator resolves it.
     """
     PENDING = "PENDING"          # hold invoice issued, waiting for payment
-    FUNDING = "FUNDING"          # payment held; selecting/leasing UTXOs and signing
-    SIGNED = "SIGNED"            # signed payout tx stored (NOT broadcast); invoice still held
-    PAID = "PAID"                # invoice settled; must broadcast the stored tx
+    SETTLING = "SETTLING"        # payment held; balance checked, settling the invoice
+    PAID = "PAID"                # invoice SETTLED (LN money is ours); must fund + sign the payout
+    SIGNED = "SIGNED"            # signed payout tx stored (NOT broadcast yet)
     BROADCASTED = "BROADCASTED"  # payout tx accepted by LND/mempool (terminal)
-    CANCELING = "CANCELING"      # decided to refund: release leases + cancel hold invoice
+    CANCELING = "CANCELING"      # decided to refund: cancel hold invoice (+ release leases)
     FAILED = "FAILED"            # hold invoice canceled, nothing paid on-chain (terminal)
     EXPIRED = "EXPIRED"          # invoice expired/canceled unpaid (terminal)
     MANUAL_REVIEW = "MANUAL_REVIEW"
@@ -56,10 +55,11 @@ class Swap(Base):
     amount_sat = Column(BigInteger, nullable=False)
     payout_sat = Column(BigInteger, nullable=False)
     miner_fee_sat = Column(BigInteger, nullable=False)  # max on-chain fee charged to the user
+    fee_rate_sat_vb = Column(Integer, nullable=False)  # fee rate the user was charged; the payout uses it
     invoice = Column(Text, nullable=False)
     lock_id = Column(String(64), nullable=False)  # hex, LND UTXO lease id for this swap
 
-    # Payout transaction (set in FUNDING -> SIGNED, never changed afterwards)
+    # Payout transaction (set in PAID -> SIGNED, never changed afterwards)
     raw_tx = Column(Text, nullable=True)  # hex
     txid = Column(String(64), nullable=True, unique=True)
     actual_fee_sat = Column(BigInteger, nullable=True)

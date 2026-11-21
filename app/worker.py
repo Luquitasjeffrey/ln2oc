@@ -5,13 +5,19 @@ Runs in a single dedicated thread, in a single process (enforced by an exclusive
 file lock). Every state transition is a compare-and-set on the stored status, and
 every step is safe to re-run after a crash at any point.
 
-Money rules (in order of priority):
-  1. Never publish an on-chain payout before the Lightning payment is SETTLED (ours).
-  2. Never publish a payout that is not the exact tx we signed, verified and stored.
-     Re-publishing that same tx is idempotent, so retries can never pay twice.
-  3. If we cannot fund the payout (no balance, fee too high, CLTV too close),
-     cancel the hold invoice so the payer gets their money back.
-  4. If anything is not as expected: flag the swap MANUAL_REVIEW and halt the process.
+Flow of a swap:
+  1. Hold invoice ACCEPTED: the payment is held. Only the on-chain balance (and the
+     HTLC's CLTV margin) is checked. Nothing is funded or signed. Not enough -> cancel
+     the hold invoice right away and the payer keeps their sats.
+  2. Settle the hold invoice and wait until LND reports it SETTLED. Any unexpected
+     answer -> MANUAL_REVIEW.
+  3. Only with the invoice SETTLED: fund + sign the payout, verify it, and store the
+     raw tx in the DB BEFORE broadcasting.
+  4. Broadcast the stored tx. Re-publishing that same tx is idempotent, so retries
+     can never pay twice.
+
+From step 2 on the operator holds the payer's money: any failure to pay is never
+"refunded" automatically; it halts the service (MANUAL_REVIEW) for a human to fix.
 """
 import fcntl
 import logging
@@ -24,7 +30,6 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
-from app.fees import FeeEstimateError, current_fee_rate_sat_per_vbyte
 from app.halt import FatalSwapError, halt_process
 from app.invoice_watcher import InvoiceWatcher
 from app.lnd import HtlcState, InvoiceState, LndClient, LndError, LndUnavailable, lnd_client
@@ -34,9 +39,10 @@ from app.validator import address_to_script
 
 logger = logging.getLogger("ln2oc.worker")
 
-# Statuses that use (or may be using) wallet UTXOs for a payout. At most ONE swap may
-# be in any of these at a time, so payouts can never compete for the same coins.
-PAYOUT_STATUSES = (SwapStatus.FUNDING, SwapStatus.SIGNED, SwapStatus.PAID)
+# Statuses of a payout in flight (from the balance check to the broadcast). At most ONE
+# swap may be in any of these at a time: the balance check of the next payment must see
+# the wallet after the previous payout has actually spent its coins.
+PAYOUT_STATUSES = (SwapStatus.SETTLING, SwapStatus.PAID, SwapStatus.SIGNED)
 
 # Publish errors that mean "this exact tx is already known to the network".
 _ALREADY_PUBLISHED_MARKERS = (
@@ -252,11 +258,11 @@ class SwapWorker:
         try:
             while swap.status in PAYOUT_STATUSES:
                 before = swap.status
-                if swap.status == SwapStatus.FUNDING:
-                    self._do_funding(db, swap)
-                elif swap.status == SwapStatus.SIGNED:
+                if swap.status == SwapStatus.SETTLING:
                     self._do_settle(db, swap)
                 elif swap.status == SwapStatus.PAID:
+                    self._do_fund_and_sign(db, swap)
+                elif swap.status == SwapStatus.SIGNED:
                     self._do_publish(db, swap)
                 if swap.status == before:
                     raise FatalSwapError(swap.id, f"step for {before.value} made no progress")
@@ -282,7 +288,7 @@ class SwapWorker:
                     f" ({fields['error']})" if fields.get("error") else "")
 
     def _to_canceling(self, db: Session, swap: Swap, reason: str) -> None:
-        if swap.status not in (SwapStatus.PENDING, SwapStatus.FUNDING, SwapStatus.SIGNED):
+        if swap.status not in (SwapStatus.PENDING, SwapStatus.SETTLING):
             raise FatalSwapError(swap.id, f"refusing to cancel from {swap.status.value}: {reason}")
         logger.warning("Swap %s: refunding payer: %s", swap.id, reason)
         self._transition(db, swap, swap.status, SwapStatus.CANCELING, error=reason)
@@ -313,6 +319,12 @@ class SwapWorker:
             return self.lnd.lookup_invoice(bytes.fromhex(swap.payment_hash))
         except LndError as e:
             raise FatalSwapError(swap.id, f"cannot look up our own invoice: {e}")
+
+    def _spendable_sat(self) -> int:
+        """On-chain balance the wallet can spend now (LND already excludes leased UTXOs
+        and keeps the anchor reserve unspendable)."""
+        bal = self.lnd.wallet_balance()
+        return int(bal.confirmed_balance) - int(bal.reserved_balance_anchor_chan)
 
     def _release_leases(self, swap: Swap) -> None:
         lock_id = bytes.fromhex(swap.lock_id)
@@ -345,66 +357,96 @@ class SwapWorker:
             return None
         if payout_busy:
             return "waiting"  # wait for the current payout to finish
-        logger.info("Swap %s: payment held (%d sat, CLTV margin %d blocks), starting payout",
-                    swap.id, swap.amount_sat, margin)
-        self._transition(db, swap, SwapStatus.PENDING, SwapStatus.FUNDING)
+        logger.info("Swap %s: payment held (%d sat, CLTV margin %d blocks)", swap.id, swap.amount_sat, margin)
+        self._transition(db, swap, SwapStatus.PENDING, SwapStatus.SETTLING)
         return "started"
 
-    # ------------------------------------------------------------------ FUNDING
+    # ------------------------------------------------------------------ SETTLING
 
-    def _do_funding(self, db: Session, swap: Swap) -> None:
-        """Select + lease UTXOs, sign, verify and STORE the payout tx. Broadcasts nothing.
-        Re-runnable: always starts by dropping leases left by a previous attempt."""
-        self._release_leases(swap)
-
+    def _do_settle(self, db: Session, swap: Swap) -> None:
+        """Invoice ACCEPTED: check the on-chain balance (nothing else), then settle and
+        wait until LND reports SETTLED. Re-runnable after a crash at any point."""
         invoice = self._lookup(swap)
         if invoice.state == InvoiceState.SETTLED:
-            raise FatalSwapError(swap.id, "invoice SETTLED while FUNDING: no payout tx exists yet")
-        if invoice.state != InvoiceState.ACCEPTED:
-            self._to_canceling(db, swap, f"payment no longer held while funding (state {invoice.state})")
+            # We settled before but crashed before recording it.
+            self._transition(db, swap, SwapStatus.SETTLING, SwapStatus.PAID)
             return
+        if invoice.state != InvoiceState.ACCEPTED:
+            # Payment no longer held (e.g. HTLC canceled by LND near expiry): nothing was taken.
+            self._to_canceling(db, swap, f"payment no longer held before settle (state {invoice.state})")
+            return
+
         margin = self._check_payment(swap, invoice)
         if margin < settings.MIN_CLTV_MARGIN_BLOCKS:
             self._to_canceling(db, swap, f"HTLC CLTV margin {margin} < {settings.MIN_CLTV_MARGIN_BLOCKS} blocks")
             return
 
+        required = swap.payout_sat + swap.miner_fee_sat
         try:
-            sat_per_vbyte = current_fee_rate_sat_per_vbyte(self.lnd)
-        except (FeeEstimateError, LndError) as e:
-            self._to_canceling(db, swap, f"fee estimation failed: {e}")
+            spendable = self._spendable_sat()
+        except LndError as e:
+            self._to_canceling(db, swap, f"cannot read on-chain balance: {e.message}")
+            return
+        if spendable < required:
+            self._to_canceling(db, swap, f"insufficient on-chain balance: {spendable} sat spendable, {required} sat required")
             return
 
+        try:
+            self.lnd.settle_invoice(bytes.fromhex(swap.preimage))
+        except LndError as e:
+            after = self._lookup(swap)
+            if after.state == InvoiceState.SETTLED:
+                self._transition(db, swap, SwapStatus.SETTLING, SwapStatus.PAID)
+                return
+            if after.state == InvoiceState.CANCELED:
+                self._to_canceling(db, swap, f"invoice canceled during settle: {e.message}")
+                return
+            raise FatalSwapError(swap.id, f"settle rejected while invoice {after.state}: {e.message}")
+
+        # Wait for LND to confirm the invoice is SETTLED before touching on-chain funds.
+        if self._lookup(swap).state != InvoiceState.SETTLED:
+            raise _Blocked("settle sent, invoice not reported SETTLED yet")
+        self._transition(db, swap, SwapStatus.SETTLING, SwapStatus.PAID)
+        logger.info("Swap %s: Lightning payment settled (%d sat)", swap.id, swap.amount_sat)
+
+    # ------------------------------------------------------------------ PAID
+
+    def _do_fund_and_sign(self, db: Session, swap: Swap) -> None:
+        """Invoice SETTLED (the payer's money is ours): fund + sign the payout, verify it
+        and STORE it. Broadcasts nothing. Re-runnable: drops leases of a previous attempt.
+        Any definitive failure here means the user is owed: halt for manual review."""
+        if self._lookup(swap).state != InvoiceState.SETTLED:
+            raise FatalSwapError(swap.id, "PAID but invoice is not SETTLED")
+        self._release_leases(swap)
+
         lock_id = bytes.fromhex(swap.lock_id)
+        owed = f"USER IS OWED {swap.payout_sat} sat to {swap.btc_address}"
         try:
             funded = self.lnd.fund_psbt(
                 addr=swap.btc_address,
                 amount_sat=swap.payout_sat,
-                sat_per_vbyte=sat_per_vbyte,
+                sat_per_vbyte=swap.fee_rate_sat_vb,  # the rate the user was charged for
                 lock_id=lock_id,
                 lock_expiration_seconds=settings.UTXO_LEASE_SECONDS,
                 min_confs=settings.ONCHAIN_MIN_CONFS,
             )
         except LndError as e:
-            self._to_canceling(db, swap, f"cannot fund payout: {e.message}")
-            return
+            raise FatalSwapError(swap.id, f"cannot fund payout after settle ({owed}): {e.message}")
         try:
             final = self.lnd.finalize_psbt(funded.funded_psbt)
         except LndError as e:
-            self._to_canceling(db, swap, f"cannot sign payout: {e.message}")
-            return
+            raise FatalSwapError(swap.id, f"cannot sign payout after settle ({owed}): {e.message}")
 
         raw = bytes(final.raw_final_tx)
         txid, fee = self._verify_payout_tx(swap, raw, funded, lock_id)
-
         if fee > swap.miner_fee_sat:
-            self._to_canceling(db, swap, f"actual miner fee {fee} sat exceeds charged {swap.miner_fee_sat} sat "
-                                         f"({sat_per_vbyte} sat/vB)")
-            return
+            logger.warning("Swap %s: actual miner fee %d sat exceeds charged %d sat; operator absorbs %d sat",
+                           swap.id, fee, swap.miner_fee_sat, fee - swap.miner_fee_sat)
 
-        self._transition(db, swap, SwapStatus.FUNDING, SwapStatus.SIGNED,
+        self._transition(db, swap, SwapStatus.PAID, SwapStatus.SIGNED,
                          raw_tx=raw.hex(), txid=txid, actual_fee_sat=fee)
-        logger.info("Swap %s: payout tx %s signed and stored (fee %d sat, %d sat/vB), not broadcast",
-                    swap.id, txid, fee, sat_per_vbyte)
+        logger.info("Swap %s: payout tx %s signed and stored (fee %d sat, %d sat/vB), not broadcast yet",
+                    swap.id, txid, fee, swap.fee_rate_sat_vb)
 
     def _verify_payout_tx(self, swap: Swap, raw: bytes, funded, lock_id: bytes) -> tuple[str, int]:
         """Independent check of what LND signed. Any surprise is fatal."""
@@ -442,45 +484,10 @@ class SwapWorker:
 
     # ------------------------------------------------------------------ SIGNED
 
-    def _do_settle(self, db: Session, swap: Swap) -> None:
-        """Claim the Lightning payment. Only after this may the payout be broadcast."""
-        invoice = self._lookup(swap)
-
-        if invoice.state == InvoiceState.SETTLED:
-            # We settled before but crashed before recording it.
-            self._transition(db, swap, SwapStatus.SIGNED, SwapStatus.PAID)
-            return
-        if invoice.state != InvoiceState.ACCEPTED:
-            # Payment gone; the signed tx was never broadcast (that only happens from PAID).
-            self._to_canceling(db, swap, f"payment no longer held before settle (state {invoice.state})")
-            return
-
-        margin = self._check_payment(swap, invoice)
-        if margin < settings.MIN_CLTV_MARGIN_BLOCKS:
-            self._to_canceling(db, swap, f"HTLC CLTV margin {margin} < {settings.MIN_CLTV_MARGIN_BLOCKS} blocks")
-            return
-
-        try:
-            self.lnd.settle_invoice(bytes.fromhex(swap.preimage))
-        except LndError as e:
-            after = self._lookup(swap)
-            if after.state == InvoiceState.SETTLED:
-                self._transition(db, swap, SwapStatus.SIGNED, SwapStatus.PAID)
-                return
-            if after.state == InvoiceState.CANCELED:
-                self._to_canceling(db, swap, f"invoice canceled during settle: {e.message}")
-                return
-            raise FatalSwapError(swap.id, f"settle rejected while invoice {after.state}: {e.message}")
-
-        self._transition(db, swap, SwapStatus.SIGNED, SwapStatus.PAID)
-        logger.info("Swap %s: Lightning payment settled (%d sat)", swap.id, swap.amount_sat)
-
-    # ------------------------------------------------------------------ PAID
-
     def _do_publish(self, db: Session, swap: Swap) -> None:
         """Broadcast the stored tx. Idempotent: it is always the same signed tx."""
         if not swap.raw_tx or not swap.txid:
-            raise FatalSwapError(swap.id, "PAID without a stored payout tx")
+            raise FatalSwapError(swap.id, "SIGNED without a stored payout tx")
         raw = bytes.fromhex(swap.raw_tx)
         if parse_tx(raw).txid != swap.txid:
             raise FatalSwapError(swap.id, "stored raw tx does not match stored txid")
@@ -499,7 +506,7 @@ class SwapWorker:
             raise FatalSwapError(swap.id, f"payout broadcast rejected after settle (USER IS OWED "
                                           f"{swap.payout_sat} sat, tx {swap.txid}): {publish_error}")
 
-        self._transition(db, swap, SwapStatus.PAID, SwapStatus.BROADCASTED, error=None)
+        self._transition(db, swap, SwapStatus.SIGNED, SwapStatus.BROADCASTED, error=None)
         logger.info("Swap %s: payout %s broadcast, %d sat to %s", swap.id, swap.txid, swap.payout_sat, swap.btc_address)
 
     # ------------------------------------------------------------------ CANCELING
