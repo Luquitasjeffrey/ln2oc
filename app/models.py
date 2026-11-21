@@ -42,23 +42,6 @@ class SwapStatus(str, enum.Enum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
 
 
-ACTIVE_RESERVATION_STATUSES = (
-    SwapStatus.PENDING,
-    SwapStatus.FUNDING,
-    SwapStatus.SIGNED,
-    SwapStatus.PAID,
-    SwapStatus.CANCELING,
-    SwapStatus.MANUAL_REVIEW,
-)
-
-IN_FLIGHT_STATUSES = (
-    SwapStatus.FUNDING,
-    SwapStatus.SIGNED,
-    SwapStatus.PAID,
-    SwapStatus.CANCELING,
-)
-
-
 def _now():
     return datetime.now(timezone.utc)
 

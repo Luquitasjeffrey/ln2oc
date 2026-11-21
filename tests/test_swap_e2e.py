@@ -118,6 +118,20 @@ def test_insufficient_onchain_balance_rejected_upfront(env, monkeypatch):
             create_swap(db, REGTEST_ADDR, (confirmed + 10_000_000) * 1000)
 
 
+def test_unpaid_invoices_do_not_lock_liquidity(env, monkeypatch):
+    """Liquidity is committed only when a payment is held, never at invoice creation:
+    unpaid invoices must not block each other (or anyone else)."""
+    from app.swaps import get_spendable_onchain_balance_sat
+    spendable = get_spendable_onchain_balance_sat()
+    amount_sat = int(spendable * 0.8)
+    monkeypatch.setattr(settings, "MAX_SWAP_SAT", amount_sat)
+    monkeypatch.setattr(settings, "INVOICE_EXPIRY_SECONDS", 60)
+    with env["Session"]() as db:
+        for _ in range(3):  # 3 x 80% of the balance: would fail if PENDING reserved funds
+            create_swap(db, REGTEST_ADDR, amount_sat * 1000)
+    assert get_spendable_onchain_balance_sat() == spendable
+
+
 # --------------------------------------------------------------------- happy path
 
 
