@@ -36,7 +36,8 @@ EXPIRED (nunca se pagó)         CANCELING ──► FAILED (invoice cancelada, 
 ```
 
 1. **LNURL-Pay**: valida la dirección y el monto, y estima el fee on-chain (si no hay estimación, rechaza). **No reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez. La tasa de fee cotizada se guarda con el swap.
-   $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{miner\_fee\_sat}$$
+   $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{minería real}$$
+   La cotización usa `miner_fee_sat` = 160 vB × tasa (estimación). Al pagar, el usuario paga la minería **real** de su tx a la tasa cotizada: la diferencia con la estimación se mueve entre su output y el cambio (solo cambian montos, el tamaño y el fee no). El operador se queda exactamente con la comisión.
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
 3. **Pago retenido (`ACCEPTED`) → `SETTLING`**: el worker verifica el monto pagado, que el HTLC tenga margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`) y **que el saldo on-chain gastable alcance para el payout más la minería**. No fondea ni firma nada. Si algo no alcanza → `CANCELING` y se cancela la hold invoice al toque.
 4. **Settle** de la hold invoice, esperando a que LND la reporte `SETTLED` → `PAID`. Desde acá la plata LN es del operador y se le debe el payout al usuario: cualquier rechazo inesperado va a `MANUAL_REVIEW`.

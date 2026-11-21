@@ -116,7 +116,7 @@ export default function Operador() {
               </text>
               <path d="M236 212 L374 226" className="btcline" markerEnd="url(#ah-btc)" />
               <text x="304" y="200" textAnchor="middle" className="num btct">
-                −99.140 payout
+                −99.169 payout
               </text>
               <path d="M236 250 L326 280" className="btcline" markerEnd="url(#ah-btc)" />
               <text x="334" y="290" className="num btct">
@@ -129,7 +129,7 @@ export default function Operador() {
             </svg>
           </div>
           <figcaption>
-            Un swap de 100.000 sats con la minería de hoy, 1 sat/vB: el lado on-chain pierde 99.271 sats y el lado Lightning gana 100.000. Te quedan 729 sats de margen: 700 de comisión y 29 que sobraron del presupuesto de minería. Sin rebalancear, en algún momento se te acaba el tanque on-chain o la liquidez entrante, y los swaps se empiezan a cancelar.
+            Un swap de 100.000 sats con la minería de hoy, 1 sat/vB: el lado on-chain pierde 99.300 sats (99.169 de payout y 131 de minería, que paga el usuario) y el lado Lightning gana 100.000. Te quedan exactamente los 700 sats de la comisión: la minería no te suma ni te resta. Sin rebalancear, en algún momento se te acaba el tanque on-chain o la liquidez entrante, y los swaps se empiezan a cancelar.
           </figcaption>
         </figure>
       </section>

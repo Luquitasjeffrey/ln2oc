@@ -42,14 +42,14 @@ export function SwapLedger({ amount = 100_000 }: { amount?: number }) {
             </tr>
             <tr>
               <td>
-                Presupuesto de minería ({x.vbytes} vB × {fmt(x.rate)} sat/vB)
+                Minería estimada ({x.vbytes} vB × {fmt(x.rate)} sat/vB)
               </td>
               <td className="r">−{fmt(x.miner)}</td>
             </tr>
           </tbody>
           <tfoot>
             <tr>
-              <td>Llega a tu cold wallet</td>
+              <td>Llega a tu cold wallet (aprox.)</td>
               <td className="r btc">{fmt(x.payout)}</td>
             </tr>
           </tfoot>
@@ -59,7 +59,7 @@ export function SwapLedger({ amount = 100_000 }: { amount?: number }) {
         {x.live
           ? `Con la minería de ahora, ${fmt(x.rate)} sat/vB, según el nodo de esta instancia.`
           : "Ejemplo con 1 sat/vB de minería."}{" "}
-        El presupuesto se calcula con la estimación del nodo al pedir la invoice: si el mempool se llena, sube con él.
+        Es una estimación con 160 vB: se descuenta la minería real de tu tx, a la tasa del momento de pedir la invoice. Una tx típica pesa unos 131 vB, así que suele llegar un poco más. El servicio se queda solo con la comisión.
       </p>
     </>
   );
