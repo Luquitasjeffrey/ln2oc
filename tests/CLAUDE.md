@@ -14,7 +14,8 @@ Credenciales en `/home/lucas/.polar/networks/3/volumes/lnd/<Nodo>/`. Kross tiene
 
 - `env` (fixture): DB SQLite nueva en `tmp_path` y un `SwapWorker` cuyo `on_fatal` solo registra el motivo en vez de matar el proceso.
 - `insert_swap(...)`: crea una hold invoice real en Kross y la fila `PENDING`, salteando las validaciones de `create_swap`. `fee_rate_sat_vb` por defecto es la estimación actual.
-- `tick_until(env, swap_id, statuses)`: avanza un worker que no corre en un hilo; llama a `worker.notify(swap_id)` antes de cada tick para simular el aviso de la detección de pagos. **Cuando se reemplace la suscripción por polling, revisar este helper y los tests `test_subscription_*` / `test_startup_refuses_more_pending_swaps_than_it_can_watch`.**
+- `tick_until(env, swap_id, statuses)`: avanza a mano un worker que no corre en un hilo; cada tick es un barrido completo de las `PENDING` (`run_tick_guarded()` con `poll_pending=True` por defecto).
+- `_polling_worker(env, poll_interval)`: worker real en su hilo. Con `poll_interval=300` solo el barrido inicial ve los pagos, lo que sirve para probar que los pagos retenidos que esperan el slot avanzan por el retry rápido y no por el próximo barrido.
 - `ambiguous_once(real)`: ejecuta la llamada real a LND y después tira `LndUnavailable`, simulando una respuesta perdida. Con eso se prueba que nunca se paga dos veces.
 - `assert_paid_exactly_once`: verifica en bitcoind que el destino recibió exactamente el payout una sola vez, que la invoice quedó `SETTLED` y que los leases son solo los de esa tx.
 - Después de cada payout, `mine_blocks(1)` para que el cambio confirme (los payouts usan `ONCHAIN_MIN_CONFS=1`).

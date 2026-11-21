@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -41,6 +42,13 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     """
     if is_halted():
         raise SwapError("Service halted", status_code=503)
+
+    # Every PENDING invoice is looked up on each poll: cap them so an attacker requesting
+    # invoices for free cannot grow that work without bound.
+    pending = db.execute(select(func.count()).select_from(Swap).where(Swap.status == SwapStatus.PENDING)).scalar_one()
+    if pending >= settings.MAX_PENDING_SWAPS:
+        logger.warning("Refusing new swap: %d PENDING swaps (MAX_PENDING_SWAPS=%d)", pending, settings.MAX_PENDING_SWAPS)
+        raise SwapError("Too many pending swaps, try again later", status_code=503)
 
     if not validate_bitcoin_address(btc_address, settings.BITCOIN_NETWORK):
         raise SwapError(f"Invalid Bitcoin address for network '{settings.BITCOIN_NETWORK}': {btc_address}")

@@ -16,6 +16,10 @@ Flow of a swap:
   4. Broadcast the stored tx. Re-publishing that same tx is idempotent, so retries
      can never pay twice.
 
+Payment detection is synchronous polling from this same thread: every
+INVOICE_POLL_INTERVAL_SECONDS it looks up each PENDING invoice, one after another
+(bounded by MAX_PENDING_SWAPS). No subscriptions and no thread per invoice.
+
 From step 2 on the operator holds the payer's money: any failure to pay is never
 "refunded" automatically; it halts the service (MANUAL_REVIEW) for a human to fix.
 """
@@ -23,6 +27,7 @@ import fcntl
 import logging
 import os
 import threading
+import time
 from typing import Callable, Optional
 
 from sqlalchemy import select, update
@@ -31,7 +36,6 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import SessionLocal
 from app.halt import FatalSwapError, halt_process
-from app.invoice_watcher import InvoiceWatcher
 from app.lnd import HtlcState, InvoiceState, LndClient, LndError, LndUnavailable, lnd_client
 from app.models import Swap, SwapStatus
 from app.tx import parse_tx
@@ -66,25 +70,23 @@ class SwapWorker:
         retry_interval_seconds: Optional[float] = None,
         lock_path: Optional[str] = None,
         on_fatal: Optional[Callable[[str], None]] = None,
-        max_watched_invoices: Optional[int] = None,
+        poll_interval_seconds: Optional[float] = None,
     ):
         self.lnd = lnd or lnd_client
         self.session_factory = session_factory or SessionLocal
         self.retry_interval = retry_interval_seconds or settings.WORKER_RETRY_INTERVAL_SECONDS
+        self.poll_interval = poll_interval_seconds or settings.INVOICE_POLL_INTERVAL_SECONDS
         self.lock_path = lock_path
         self.on_fatal = on_fatal or halt_process
         self._lock_fd: Optional[int] = None
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._running = False
-        # Wake-ups: swap ids that need a look, plus an event to interrupt the wait.
-        self._wake = threading.Event()
-        self._dirty: set[int] = set()
-        self._dirty_lock = threading.Lock()
-        self.watcher = InvoiceWatcher(
-            self.lnd, on_update=self.notify,
-            max_watched=max_watched_invoices or settings.MAX_WATCHED_INVOICES,
-        )
+        # PENDING swaps whose payment is held (ACCEPTED) but wait for the payout slot.
+        # Only touched by the worker thread (or by tests driving tick() by hand).
+        self._held: set[int] = set()
+        # Set by tick() when it looked up every PENDING invoice without being interrupted.
+        self._poll_completed = False
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -113,72 +115,47 @@ class SwapWorker:
             self.acquire_process_lock()
         self._stop.clear()
         self._running = True
-        self._watch_all_pending()
         self._thread = threading.Thread(target=self._run, name="ln2oc-swap-worker", daemon=True)
         self._thread.start()
-        logger.info("Swap worker started")
+        logger.info("Swap worker started (polling pending invoices every %.0fs)", self.poll_interval)
 
     def stop(self, timeout: float = 60.0) -> None:
         self._running = False
         self._stop.set()
-        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout)
             if self._thread.is_alive():
                 logger.error("Swap worker did not stop within %.0fs", timeout)
-        self.watcher.close()
         self.release_process_lock()
         logger.info("Swap worker stopped")
 
-    # ------------------------------------------------------------------ wake-ups
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
-    def notify(self, swap_id: int) -> None:
-        """Ask the worker to look at a swap soon (called from watcher threads)."""
-        with self._dirty_lock:
-            self._dirty.add(swap_id)
-        self._wake.set()
-
-    def can_accept_new_swaps(self) -> bool:
-        return self.watcher.has_capacity()
-
-    def notify_new_swap(self, swap_id: int, payment_hash: bytes) -> bool:
-        """Called by the API after persisting a new PENDING swap. Returns False if the
-        invoice cannot be watched (it would never be noticed: caller must cancel it).
-        When the worker is not running yet, start() subscribes every PENDING swap."""
-        if not self._running:
-            return True
-        return self.watcher.watch(swap_id, payment_hash)
-
-    def _watch_all_pending(self) -> None:
-        """Startup: subscribe every PENDING swap. LND sends each invoice's current state
-        first, so payments held while we were down are picked up immediately."""
-        with self.session_factory() as db:
-            pending = self._swaps(db, SwapStatus.PENDING)
-        for swap in pending:
-            if not self.watcher.watch(swap.id, bytes.fromhex(swap.payment_hash)):
-                raise RuntimeError(
-                    f"{len(pending)} PENDING swaps exceed MAX_WATCHED_INVOICES={self.watcher.max_watched}; "
-                    "refusing to start with invoices nobody would watch"
-                )
-        logger.info("Subscribed to %d pending invoice(s)", len(pending))
-
-    def _pop_dirty(self) -> set[int]:
-        with self._dirty_lock:
-            dirty, self._dirty = self._dirty, set()
-        return dirty
+    # ------------------------------------------------------------------ loop
 
     def _run(self) -> None:
+        """Two paces, one thread: every poll_interval look up all PENDING invoices (the
+        first poll runs right away, so payments held while we were down are seen at
+        startup); in between, while something is in flight, retry only that."""
+        next_poll = time.monotonic()
         while not self._stop.is_set():
-            busy = self.run_tick_guarded()
-            # Idle: sleep until a watcher reports an invoice change. Busy (our own payout or
-            # refund in flight, LND unavailable): retry our pending operation shortly.
-            self._wake.wait(self.retry_interval if busy else None)
-            self._wake.clear()  # before the next tick pops _dirty, so no notification is lost
+            poll = time.monotonic() >= next_poll
+            if poll:
+                next_poll = time.monotonic() + self.poll_interval
+            busy = self.run_tick_guarded(poll_pending=poll)
+            if poll and not self._poll_completed:
+                next_poll = time.monotonic()  # interrupted (e.g. LND down): poll again on the next retry
+                busy = True
+            wait = max(0.0, next_poll - time.monotonic())
+            if busy:
+                wait = min(wait, self.retry_interval)
+            self._stop.wait(wait)
 
-    def run_tick_guarded(self) -> bool:
+    def run_tick_guarded(self, poll_pending: bool = True) -> bool:
         """Runs one tick. Returns True if something needs a quick retry."""
         try:
-            return self.tick()
+            return self.tick(poll_pending=poll_pending)
         except FatalSwapError as e:
             self._handle_fatal(e)
         except LndUnavailable as e:
@@ -208,11 +185,12 @@ class SwapWorker:
 
     # ------------------------------------------------------------------ tick
 
-    def tick(self) -> bool:
-        """One pass of the state machine: in-flight refunds and payout, plus the PENDING
-        swaps whose invoice a watcher reported as changed.
+    def tick(self, poll_pending: bool = True) -> bool:
+        """One pass of the state machine: in-flight refunds and payout, then the PENDING
+        swaps: all of them (one LookupInvoice each, in creation order) when poll_pending,
+        otherwise only those whose payment is already held and waits for the payout slot.
         Returns True if something is still in progress and needs a quick retry."""
-        dirty = self._pop_dirty()
+        self._poll_completed = False
         with self.session_factory() as db:
             if db.execute(select(Swap.id).where(Swap.status == SwapStatus.MANUAL_REVIEW)).first():
                 raise FatalSwapError(None, "a swap is in MANUAL_REVIEW; refusing to process anything")
@@ -224,22 +202,26 @@ class SwapWorker:
             # 2. The (single) payout in flight.
             payout_busy = self._advance_payout(db)
 
-            # 3. PENDING swaps whose invoice changed (reported by the subscriptions).
-            pending = [s for s in self._swaps(db, SwapStatus.PENDING) if s.id in dirty]
+            # 3. PENDING swaps.
+            pending = self._swaps(db, SwapStatus.PENDING)
+            if poll_pending:
+                self._held &= {s.id for s in pending}
+            else:
+                pending = [s for s in pending if s.id in self._held]
 
-            waiting = False
             for swap in pending:
                 outcome = self._process_pending(db, swap, payout_busy)
+                if outcome == "waiting":
+                    self._held.add(swap.id)  # payment held, payout slot busy: retry soon
+                else:
+                    self._held.discard(swap.id)
                 if outcome == "started":
                     payout_busy = self._advance_payout(db)
-                elif outcome == "waiting":
-                    waiting = True
-                    with self._dirty_lock:
-                        self._dirty.add(swap.id)  # payment held, payout slot busy: retry soon
-                if swap.status != SwapStatus.PENDING:
-                    self.watcher.unwatch(swap.id)
 
-            return payout_busy or waiting
+            if poll_pending:
+                self._poll_completed = True
+                logger.debug("Polled %d pending invoice(s)", len(pending))
+            return payout_busy or bool(self._held)
 
     def _swaps(self, db: Session, *statuses: SwapStatus) -> list[Swap]:
         return list(db.execute(

@@ -158,11 +158,10 @@ def get_swap(Session, swap_id: int) -> Swap:
 
 
 def tick_until(env, swap_id: int, statuses, max_ticks: int = 60) -> Swap:
-    """Drives a non-running worker by hand. notify() stands in for the invoice
-    subscription (tested separately with a real worker thread)."""
+    """Drives a non-running worker by hand: every tick is a full poll of the PENDING
+    invoices (the worker thread's two paces are tested separately)."""
     statuses = set(statuses)
     for _ in range(max_ticks):
-        env["worker"].notify(swap_id)
         env["worker"].run_tick_guarded()
         swap = get_swap(env["Session"], swap_id)
         if swap.status in statuses or env["fatal"].reasons:

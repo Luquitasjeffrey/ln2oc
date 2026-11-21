@@ -47,7 +47,7 @@ Garantías:
 - Cada paso es re-ejecutable tras una caída en cualquier punto. Un resultado ambiguo de LND (timeout, conexión cortada) nunca se interpreta como fracaso: se vuelve a consultar el estado real.
 - Cada transición es un compare-and-set sobre el estado guardado, y hay como máximo **un payout en vuelo** a la vez (de `SETTLING` a `BROADCASTED`), así el chequeo de saldo del siguiente pago ve la wallet después de que el anterior gastó sus UTXOs.
 - Un único proceso: el worker toma un lock exclusivo de archivo (`WORKER_LOCK_FILE`). Un segundo proceso (otro `--workers` de uvicorn, otro contenedor sobre el mismo volumen) se niega a arrancar.
-- **Detección de pagos solo por `SubscribeSingleInvoice`**, una suscripción por swap `PENDING`, sin polling de invoices. Al suscribirse (al arrancar o al reconectar un stream cortado), LND manda primero el estado actual de la invoice, así que no se pierden eventos. Los watchers solo despiertan al worker: no deciden ni escriben en la DB; el worker vuelve a consultar el estado en LND y aplica la máquina de estados. Si hay más swaps pendientes que `MAX_WATCHED_INVOICES`, se rechazan swaps nuevos (503), y al arrancar el servicio se niega a iniciar, porque una invoice sin suscripción no se detectaría nunca.
+- **Detección de pagos por polling síncrono**, desde el mismo hilo del worker: cada `INVOICE_POLL_INTERVAL_SECONDS` (60 s por defecto) consulta con `LookupInvoice` cada swap `PENDING`, de a uno y en orden de creación. No hay suscripciones ni un hilo por invoice: el trabajo está acotado por `MAX_PENDING_SWAPS` (por encima se rechazan swaps nuevos con 503). El primer barrido corre al arrancar, así que un pago retenido mientras el servicio estaba caído se ve enseguida. Mientras el HTLC está retenido el pago sigue en vuelo para el pagador, así que el intervalo solo demora el payout. Entre barridos, el worker reintenta cada `WORKER_RETRY_INTERVAL_SECONDS` únicamente lo que está en curso (payout, reembolso, o un pago ya retenido que espera el slot de payout).
 
 ### 🚨 `MANUAL_REVIEW`
 
@@ -92,8 +92,9 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `HOLD_INVOICE_CLTV_EXPIRY` | CLTV final pedido para los HTLC de la hold invoice | `144` |
 | `MIN_CLTV_MARGIN_BLOCKS` | Margen mínimo de CLTV para settlear; si no alcanza, se reembolsa | `40` |
 | `WORKER_LOCK_FILE` | Lock de proceso único | `<db>.worker.lock` |
-| `WORKER_RETRY_INTERVAL_SECONDS` | Reintento de nuestras operaciones en curso (fund/settle/publish/cancel) mientras LND no responde | `2` |
-| `MAX_WATCHED_INVOICES` | Suscripciones simultáneas máximas; por encima se rechazan swaps nuevos | `5000` |
+| `INVOICE_POLL_INTERVAL_SECONDS` | Cada cuánto se consultan todas las invoices pendientes, de a una (1–600) | `60` |
+| `WORKER_RETRY_INTERVAL_SECONDS` | Reintento de lo que está en curso (fund/settle/publish/cancel, pago retenido esperando el slot) | `2` |
+| `MAX_PENDING_SWAPS` | Swaps `PENDING` (invoices sin pagar) máximos; por encima se rechazan swaps nuevos | `5000` |
 | `DOMAIN` | Dominio para metadatos de Lightning Address | `127.0.0.1:8000` |
 | `EXTERNAL_URL` | URL pública o base del servicio | `http://127.0.0.1:8000` |
 | `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./ln2oc.db` |
@@ -126,7 +127,7 @@ El servidor quedará escuchando en `http://localhost:8000`. Al iniciar:
 - Toma el lock de proceso único.
 - Crea las tablas y verifica que el schema coincida con los modelos (no hay migraciones: con una DB vieja se niega a arrancar).
 - Se niega a arrancar si hay swaps en `MANUAL_REVIEW` o si LND está en otra red que `BITCOIN_NETWORK`.
-- Se suscribe a todas las invoices pendientes e inicia el worker en un hilo dedicado, que retoma cualquier swap en curso desde su estado guardado.
+- Inicia el worker en un único hilo dedicado: retoma cualquier swap en curso desde su estado guardado y hace el primer barrido de invoices pendientes.
 
 ---
 

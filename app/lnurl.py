@@ -8,10 +8,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.halt import is_halted
-from app.lnd import lnd_client
 from app.swaps import SwapError, create_swap
 from app.validator import validate_bitcoin_address
-from app.worker import swap_worker
 
 router = APIRouter()
 logger = logging.getLogger("ln2oc.lnurl")
@@ -52,8 +50,6 @@ def lnurlp_callback(
     db: Session = Depends(get_db),
 ):
     """LNURL-Pay step 2: issue the hold invoice."""
-    if not swap_worker.can_accept_new_swaps():
-        return _error(503, "Too many pending swaps, try again later")
     try:
         swap = create_swap(db=db, btc_address=btc_address, amount_msat=amount)
     except SwapError as e:
@@ -62,14 +58,5 @@ def lnurlp_callback(
     except Exception:
         logger.exception("Unexpected error in lnurlp callback")
         return _error(500, "Internal server error")
-    # Subscribe right away: the subscription is the only way the payment gets noticed.
-    if not swap_worker.notify_new_swap(swap.id, bytes.fromhex(swap.payment_hash)):
-        # Nobody would watch this invoice; never hand it out. Cancel it so it can't be paid
-        # (on restart the worker sees it CANCELED and marks the swap EXPIRED).
-        logger.error("Could not subscribe to invoice of swap %s; canceling it", swap.id)
-        try:
-            lnd_client.cancel_invoice(bytes.fromhex(swap.payment_hash))
-        except Exception:
-            logger.exception("Could not cancel unwatched invoice of swap %s", swap.id)
-        return _error(503, "Too many pending swaps, try again later")
+    # Nothing else to do: the worker's next poll looks up this invoice.
     return {"pr": swap.invoice, "routes": []}

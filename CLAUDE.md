@@ -38,7 +38,7 @@ MANUAL_REVIEW: invariante roto → el proceso termina y no arranca mientras exis
 5. `SIGNED` → `BROADCASTED`: publicar la tx guardada. Reintentar es idempotente.
 
 Invariantes (ver `app/worker.py`):
-- Un único proceso (lock exclusivo de archivo) y un único hilo worker; transiciones compare-and-set (`_transition`).
+- Un único proceso (lock exclusivo de archivo) y un único hilo worker, que también detecta los pagos (polling síncrono, sin suscripciones); transiciones compare-and-set (`_transition`).
 - Como máximo **un payout en vuelo** (`SETTLING`/`PAID`/`SIGNED`) para que el chequeo de saldo del siguiente vea la wallet ya gastada.
 - Resultado ambiguo de LND (`LndUnavailable`: timeout, conexión cortada) nunca se toma como fracaso: se vuelve a consultar el estado. `LndError` = LND rechazó explícitamente.
 - TLS hacia LND siempre verificado (falla cerrado).
@@ -48,7 +48,7 @@ Invariantes (ver `app/worker.py`):
 - Reservar saldo al emitir la invoice: **descartado** (permitía bloquear liquidez gratis). La liquidez se compromete al recibir el pago.
 - Firmar antes del settle o reservar UTXOs con `FundPsbt` antes del settle: **descartado** por el usuario. Con `ACCEPTED` solo se mira el saldo.
 - REST → **gRPC** con stubs generados desde `proto/` (fijados a LND v0.20.0-beta).
-- Detección de pagos: **un solo job síncrono que consulta todas las invoices pendientes, de a una** (reemplaza a `app/invoice_watcher.py`). Sin barrido + suscripción a la vez.
+- Detección de pagos: **polling síncrono desde el hilo worker**, `LookupInvoice` de cada `PENDING` de a una, cada `INVOICE_POLL_INTERVAL_SECONDS` (60 s, decidido por el usuario). Tope `MAX_PENDING_SWAPS`. Sin suscripciones. Implementado.
 - Boltz está caído (desde agosto de 2026); no contarlo como opción de reposición.
 
 ## Estructura
@@ -57,8 +57,7 @@ Invariantes (ver `app/worker.py`):
 |---|---|
 | `app/lnurl.py` | Endpoints LNURL-pay (`/.well-known/lnurlp/{addr}`, `/lnurlp/cb`), handlers sync |
 | `app/swaps.py` | `create_swap` |
-| `app/worker.py` | Máquina de estados; único componente que mueve plata |
-| `app/invoice_watcher.py` | **A reemplazar**: hoy una suscripción `SubscribeSingleInvoice` por invoice, en un hilo cada una |
+| `app/worker.py` | Máquina de estados y polling de invoices; único componente que mueve plata |
 | `app/lnd.py` | Cliente gRPC; `LndUnavailable` vs `LndError` |
 | `app/tx.py` | Parser estricto de tx (txid, inputs, outputs) |
 | `app/validator.py` | Direcciones bech32/bech32m/base58 → scriptPubKey |
@@ -82,7 +81,7 @@ No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio s
 ## Git
 
 - Remote `origin` = `git@github-freelance:Luquitasjeffrey/ln2oc.git` (alias SSH `github-freelance` en `~/.ssh/config`).
-- `main` = código original + LICENSE (GPLv3). El trabajo actual está en **`fix/safe-payout-flow`** (pusheada), todavía sin PR a `main`. `master` es la rama local vieja.
+- Se trabaja **directo en `main`** (pedido del usuario). `fix/safe-payout-flow` ya está mergeada (fast-forward) en `main`. `master` es la rama local vieja.
 
 ## Artifact de documentación
 
@@ -91,7 +90,6 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 ## TODO priorizado
 
 **Decidido y sin implementar**
-1. **Polling síncrono de invoices** en lugar de `invoice_watcher.py`: un job, de a una invoice. **Pendiente decidir el intervalo**: el usuario dijo ~1 minuto; propuesta 10–15 s porque exchanges P2P como Mostro esperan hasta 60 s por pago y reintentan. Actualizar tests de suscripción, README y artifact.
 2. Atajo "pegá tu dirección → `@ln2oc.com`": hoy solo existe en el artifact (`addr.js`, validación en el navegador). Si va al producto: landing en `/`.
 3. Macaroon con permisos mínimos (diferido por el usuario).
 
@@ -113,4 +111,4 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 12. Seguimiento de confirmaciones (`BROADCASTED` es terminal; una tx trabada no se detecta).
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
 
-Orden propuesto: 1 → 4, 5 → 6, 11 → 7, 8, 9.
+Orden propuesto: 4, 5 → 6, 11 → 7, 8, 9. (El 1, polling síncrono, ya está hecho.)

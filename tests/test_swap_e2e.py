@@ -5,6 +5,7 @@ but we never learn it) and checking that the payout happens exactly once.
 """
 import hashlib
 import os
+import time
 
 import pytest
 
@@ -155,55 +156,66 @@ async def test_complete_e2e_swap(env, client, payer):
     assert received_by(dest, minconf=1) == swap.payout_sat
 
 
-# --------------------------------------------------------------------- event-driven worker
+# --------------------------------------------------------------------- polling worker
 
 
-def _event_driven_worker(env):
-    """A real worker thread: it only learns about payments through SubscribeSingleInvoice."""
+def _polling_worker(env, poll_interval: float = 0.5):
+    """A real worker thread: it only learns about payments by polling LookupInvoice."""
     w = SwapWorker(session_factory=env["Session"], retry_interval_seconds=0.2,
-                   lock_path=str(env["tmp_path"] / "event.lock"), on_fatal=env["fatal"])
+                   poll_interval_seconds=poll_interval,
+                   lock_path=str(env["tmp_path"] / "poll.lock"), on_fatal=env["fatal"])
     env["worker"] = w
     return w
 
 
-def test_subscription_picks_up_swaps_pending_at_startup(env, payer):
+def _wait_invoice_state(swap_id_or_hash, Session, state, timeout: float = 30.0):
+    payment_hash = bytes.fromhex(get_swap(Session, swap_id_or_hash).payment_hash)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if lnd_client.lookup_invoice(payment_hash).state == state:
+            return
+        time.sleep(0.1)
+    raise AssertionError(f"invoice of swap {swap_id_or_hash} never reached {state}")
+
+
+_DONE = {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW}
+
+
+def test_polling_picks_up_payment_held_before_startup(env, payer):
+    """A payment held while the service was down is seen by the first poll at startup."""
     dest = new_dest_address()
     swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                                    miner_fee_sat=current_miner_fee(), address=dest)
-    worker = _event_driven_worker(env)
-    worker.start()  # subscribes every PENDING swap before the worker loop starts
-    assert worker.watcher.is_watching(swap_id)
-
     payment = payer.pay(invoice)
-    swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
+    worker = _polling_worker(env, poll_interval=300)  # only the startup poll can see it
+    worker.start()
+    swap = wait_for_status(env["Session"], swap_id, _DONE)
     assert not env["fatal"].reasons, env["fatal"].reasons
     assert payment.result(timeout=60).payment_error == ""
     assert_paid_exactly_once(swap, dest)
     worker.stop()
-    assert worker.watcher.watched_count() == 0
+    assert not worker.is_alive()
     mine_blocks(1)
 
 
-def test_subscription_picks_up_new_swaps_and_expiry(env, payer):
-    worker = _event_driven_worker(env)
+def test_polling_picks_up_new_swaps_and_expiry(env, payer):
+    worker = _polling_worker(env)
     worker.start()
 
-    # A new swap registered by the API path is processed as soon as it is paid.
+    # A swap created while running is noticed by the next poll once it is paid.
     dest = new_dest_address()
     swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                                    miner_fee_sat=current_miner_fee(), address=dest)
-    worker.notify_new_swap(swap_id, bytes.fromhex(get_swap(env["Session"], swap_id).payment_hash))
     payment = payer.pay(invoice)
-    swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    swap = wait_for_status(env["Session"], swap_id, _DONE)
     assert payment.result(timeout=60).payment_error == ""
     assert_paid_exactly_once(swap, dest)
 
-    # An invoice canceled/expired in LND is noticed through the stream too.
+    # An invoice canceled/expired in LND ends as EXPIRED.
     other_id, _ = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                               miner_fee_sat=current_miner_fee(), address=new_dest_address())
-    other = get_swap(env["Session"], other_id)
-    worker.notify_new_swap(other_id, bytes.fromhex(other.payment_hash))
-    lnd_client.cancel_invoice(bytes.fromhex(other.payment_hash))
+    lnd_client.cancel_invoice(bytes.fromhex(get_swap(env["Session"], other_id).payment_hash))
     other = wait_for_status(env["Session"], other_id, {SwapStatus.EXPIRED})
     assert other.status == SwapStatus.EXPIRED
     assert not env["fatal"].reasons, env["fatal"].reasons
@@ -212,18 +224,21 @@ def test_subscription_picks_up_new_swaps_and_expiry(env, payer):
 
 
 def test_concurrent_payments_are_paid_one_after_another(env, payer):
-    worker = _event_driven_worker(env)
-    worker.start()
+    """Three payments held at once: one poll sees them all; the payout slot takes one and
+    the others are retried at the fast pace (the next full poll is 5 minutes away)."""
     swaps = []
     for _ in range(3):
         dest = new_dest_address()
         swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                                        miner_fee_sat=current_miner_fee(), address=dest)
-        worker.notify_new_swap(swap_id, bytes.fromhex(get_swap(env["Session"], swap_id).payment_hash))
         swaps.append((swap_id, dest, invoice))
-    payments = [payer.pay(invoice) for _, _, invoice in swaps]  # all held at roughly the same time
+    payments = [payer.pay(invoice) for _, _, invoice in swaps]
+    for swap_id, _, _ in swaps:
+        _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
+    worker = _polling_worker(env, poll_interval=300)
+    worker.start()
     for (swap_id, dest, _), payment in zip(swaps, payments):
-        swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+        swap = wait_for_status(env["Session"], swap_id, _DONE, timeout=60)
         assert payment.result(timeout=60).payment_error == "", swap.error
         assert_paid_exactly_once(swap, dest)
     assert not env["fatal"].reasons, env["fatal"].reasons
@@ -231,16 +246,42 @@ def test_concurrent_payments_are_paid_one_after_another(env, payer):
     mine_blocks(1)
 
 
-def test_startup_refuses_more_pending_swaps_than_it_can_watch(env):
-    for _ in range(2):
+def test_retry_ticks_do_not_poll_every_pending_invoice(env, monkeypatch):
+    for _ in range(3):
         insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                     miner_fee_sat=current_miner_fee(), address=new_dest_address())
-    w = SwapWorker(session_factory=env["Session"], lock_path=str(env["tmp_path"] / "cap.lock"),
-                   on_fatal=env["fatal"], max_watched_invoices=1)
-    with pytest.raises(RuntimeError, match="MAX_WATCHED_INVOICES"):
-        w.start()
-    w.watcher.close()
-    w.release_process_lock()
+    calls = {"n": 0}
+    real_lookup = lnd_client.lookup_invoice
+
+    def counting(payment_hash):
+        calls["n"] += 1
+        return real_lookup(payment_hash)
+
+    monkeypatch.setattr(lnd_client, "lookup_invoice", counting)
+    worker = env["worker"]
+    assert worker.run_tick_guarded(poll_pending=False) is False
+    assert calls["n"] == 0
+    assert worker.run_tick_guarded(poll_pending=True) is False  # all OPEN: nothing to retry
+    assert calls["n"] == 3  # one LookupInvoice per PENDING swap
+    assert not env["fatal"].reasons, env["fatal"].reasons
+
+
+def test_stop_interrupts_the_poll_wait(env):
+    worker = _polling_worker(env, poll_interval=300)
+    worker.start()
+    t0 = time.monotonic()
+    worker.stop()
+    assert time.monotonic() - t0 < 5
+    assert not worker.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_pending_swaps_are_capped(env, client, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_PENDING_SWAPS", 1)
+    insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                miner_fee_sat=current_miner_fee(), address=new_dest_address())
+    res = await client.get(f"/lnurlp/cb?btc_address={REGTEST_ADDR}&amount={100_000 * 1000}")
+    assert res.status_code == 503 and "Too many pending swaps" in res.json()["reason"]
 
 
 # --------------------------------------------------------------------- refunds
@@ -407,11 +448,10 @@ def test_invoice_settled_outside_flow_is_fatal(env, payer):
     for _ in range(40):
         if lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.ACCEPTED:
             break
-        import time; time.sleep(0.25)
+        time.sleep(0.25)
     lnd_client.settle_invoice(bytes.fromhex(swap.preimage))  # someone settles behind our back
     payment.result(timeout=60)
 
-    env["worker"].notify(swap_id)
     env["worker"].run_tick_guarded()
     assert env["fatal"].reasons and "SETTLED while swap PENDING" in env["fatal"].reasons[0]
     swap = get_swap(env["Session"], swap_id)
