@@ -1,6 +1,6 @@
 # ln2oc ⚡ ➔ ₿
 
-Servicio minimalista y confiable de **Lightning → Bitcoin On-chain Swap-out** implementado en Python 3.12+ con FastAPI, SQLite (SQLAlchemy 2.x), la API REST de LND y Docker Compose.
+Servicio minimalista y confiable de **Lightning → Bitcoin On-chain Swap-out** implementado en Python 3.12+ con FastAPI, SQLite (SQLAlchemy 2.x), la API gRPC de LND y Docker Compose.
 
 ---
 
@@ -16,27 +16,43 @@ Por ejemplo:
 - Regtest: `bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz@127.0.0.1:8000`
 - Mainnet: `bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr@swapservice.com`
 
-### Flujo de Ejecución:
-1. **Validación de dirección**: Valida que la dirección sea sintáctica y criptográficamente válida (Bech32, Bech32m Taproot, Base58 P2PKH/P2SH) para la red configurada (`regtest`, `testnet`, `mainnet`).
-2. **Cálculo de comisión y payout**:
+### Flujo de Ejecución
+
+Criterios de diseño, en orden de prioridad:
+1. **No se paga on-chain hasta que el pago Lightning está cobrado** (invoice `SETTLED`).
+2. **Si no hay saldo on-chain cuando llega el pago, se cancela la hold invoice** y el pagador recupera su plata.
+3. **Fail loud**: si algo no está como se espera, el swap queda en `MANUAL_REVIEW` y el proceso se detiene. Es preferible una caída del servicio a una pérdida de fondos.
+
+```text
+PENDING ──(hold invoice ACCEPTED)──► FUNDING ──(tx firmada y guardada)──► SIGNED ──(settle LN)──► PAID ──(publicar)──► BROADCASTED
+   │                                    └──────────────► CANCELING ◄─────────┘
+   ▼                                                          ▼
+EXPIRED (nunca se pagó)                               FAILED (invoice cancelada, pagador reembolsado)
+```
+
+1. **LNURL-Pay**: valida la dirección y el monto, estima el fee on-chain (si no hay estimación, rechaza) y reserva saldo.
    $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{miner\_fee\_sat}$$
-   Por defecto la comisión es del `0.6%` (`amount_sat * 994 // 1000 - miner_fee_sat`).
-3. **Reserva atómica de fondos**: Verifica en SQLite que el saldo on-chain confirmado del nodo LND menos todas las operaciones activas concurrentes cubra el monto del swap.
-4. **Generación de Hold Invoice**: Se crea una factura Lightning condicional (`/v2/invoices/hodl`) con expiración de 1 hora.
-5. **Detección de pago (`ACCEPTED`)**: El worker en segundo plano detecta cuando el pagador envía los satoshis por Lightning (retenidos por LND).
-6. **Emisión de transacción On-chain**: Se envía la transacción de Bitcoin vía `/v1/transactions` de LND hacia la dirección de destino.
-7. **Persistencia del TXID**: El hash de la transacción on-chain (`txid`) y el estado `BROADCASTED` se guardan en la base de datos **antes** de liquidar la factura.
-8. **Liquidación (`SETTLE`)**: Con la transacción on-chain transmitida, se libera el `preimage` secreto para liquidar la Hold Invoice y cobrar los satoshis en Lightning.
-9. **Manejo de fallos y recuperación**:
-   - Si la transacción on-chain falla, la Hold Invoice se cancela inmediatamente devolviéndole los fondos al pagador.
-   - Si el servicio se reinicia tras transmitir una transacción on-chain, al arrancar liquida automáticamente las facturas pendientes asociadas a transacciones ya emitidas.
+2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
+3. **Pago retenido (`ACCEPTED`)**: el worker verifica el monto pagado y que el HTLC tenga un margen de CLTV suficiente (`MIN_CLTV_MARGIN_BLOCKS`).
+4. **FUNDING**: `FundPsbt` elige y **bloquea (lease)** UTXOs con un `lock_id` propio del swap, y `FinalizePsbt` firma. **No se transmite nada.** La tx se verifica de forma independiente (destino, monto, inputs, fee no mayor al cobrado) y se guarda en la DB con su txid → `SIGNED`. Si no hay fondos, el fee real supera lo cobrado o no queda margen de CLTV → `CANCELING`.
+5. **Settle** de la hold invoice → `PAID`. Recién ahí la plata LN es del servicio.
+6. **Publicación** de la tx guardada → `BROADCASTED`. Reintentarla es idempotente: siempre es la misma tx firmada, así que es imposible pagar dos veces.
+
+Garantías:
+- Cada paso es re-ejecutable tras una caída en cualquier punto. Un resultado ambiguo de LND (timeout, conexión cortada) nunca se interpreta como fracaso: se vuelve a consultar el estado real.
+- Cada transición es un compare-and-set sobre el estado guardado, y hay como máximo **un payout en vuelo** a la vez.
+- Un único proceso: el worker toma un lock exclusivo de archivo (`WORKER_LOCK_FILE`). Un segundo proceso (otro `--workers` de uvicorn, otro contenedor sobre el mismo volumen) se niega a arrancar.
+
+### 🚨 `MANUAL_REVIEW`
+
+Si se rompe un invariante que protege fondos (p. ej. la invoice se settleó por fuera del flujo, o la tx fue rechazada **después** del settle, en cuyo caso **se le debe el payout al usuario**), el swap pasa a `MANUAL_REVIEW` con el motivo en la columna `error` y el proceso termina. **El servicio no arranca mientras exista algún swap en ese estado.** Para resolverlo: revisar el caso en LND/bitcoind, actuar a mano (p. ej. publicar la `raw_tx` guardada) y recién entonces cambiar el estado en la DB.
 
 ---
 
 ## 🚀 Requisitos Previos
 
 - **Python 3.12+** (para ejecución local) o **Docker + Docker Compose**
-- Un nodo LND con API REST habilitada, fondos on-chain y liquidez de canales.
+- Un nodo LND **v0.20.x** (los protos vendorizados en `proto/` están fijados a la versión de `proto/LND_VERSION`) con gRPC accesible, fondos on-chain y liquidez de canales.
 
 ---
 
@@ -52,7 +68,8 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 
 | Variable | Descripción | Valor por defecto |
 | :--- | :--- | :--- |
-| `LND_REST_HOST` | Host y puerto REST de LND | `127.0.0.1:8081` |
+| `LND_GRPC_HOST` | Host y puerto gRPC de LND | `127.0.0.1:10001` |
+| `LND_TLS_SERVER_NAME` | Nombre a verificar en el cert TLS de LND si el host usado no está en sus SANs | vacío |
 | `LND_MACAROON_PATH` | Ruta absoluta al archivo `admin.macaroon` | `/ruta/.../admin.macaroon` |
 | `LND_TLS_CERT_PATH` | Ruta absoluta al certificado `tls.cert` | `/ruta/.../tls.cert` |
 | `BITCOIN_NETWORK` | Red Bitcoin objetivo (`regtest`, `testnet`, `mainnet`) | `regtest` |
@@ -60,7 +77,15 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `MIN_SWAP_SAT` | Monto mínimo permitido en satoshis | `1000` |
 | `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `50000000` |
 | `MIN_PAYOUT_SAT` | Límite mínimo de polvo (dust limit) | `546` |
-| `MIN_SAT_PER_VBYTE` | Tasa de minería mínima / fallback (sat/vB) | `1` |
+| `MIN_SAT_PER_VBYTE` | Tasa de minería mínima (sat/vB) | `1` |
+| `MAX_SAT_PER_VBYTE` | Si LND estima más que esto, se rechazan swaps / se reembolsa | `500` |
+| `FEE_TARGET_CONF` | Bloques objetivo para la estimación de fee | `2` |
+| `ONCHAIN_MIN_CONFS` | Confirmaciones mínimas de los UTXOs usados para pagar | `1` |
+| `UTXO_LEASE_SECONDS` | Duración del lease de UTXOs de un payout en vuelo | `86400` |
+| `INVOICE_EXPIRY_SECONDS` | Expiración de la hold invoice | `3600` |
+| `HOLD_INVOICE_CLTV_EXPIRY` | CLTV final pedido para los HTLC de la hold invoice | `144` |
+| `MIN_CLTV_MARGIN_BLOCKS` | Margen mínimo de CLTV para settlear; si no alcanza, se reembolsa | `40` |
+| `WORKER_LOCK_FILE` | Lock de proceso único | `<db>.worker.lock` |
 | `DOMAIN` | Dominio para metadatos de Lightning Address | `127.0.0.1:8000` |
 | `EXTERNAL_URL` | URL pública o base del servicio | `http://127.0.0.1:8000` |
 | `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./swapservice.db` |
@@ -74,24 +99,34 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
-### 2. Iniciar el servidor
+### 2. Generar los stubs gRPC de LND
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHON=.venv/bin/python scripts/gen_protos.sh
 ```
+Genera `app/lnrpc/` (no se versiona) a partir de `proto/`. Para cambiar de versión de LND, reemplazar los `.proto` en `proto/` y actualizar `proto/LND_VERSION`.
+
+### 3. Iniciar el servidor
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+```
+**Un solo proceso**: un segundo proceso se niega a arrancar por el lock exclusivo.
 
 El servidor quedará escuchando en `http://localhost:8000`. Al iniciar:
-- Crea automáticamente las tablas en SQLite con modo WAL.
-- Inicia el worker asíncrono en background para monitorear y procesar swaps.
-- Ejecuta el proceso de recuperación ante reinicios.
+- Toma el lock de proceso único.
+- Crea las tablas y verifica que el schema coincida con los modelos (no hay migraciones: con una DB vieja se niega a arrancar).
+- Se niega a arrancar si hay swaps en `MANUAL_REVIEW` o si LND está en otra red que `BITCOIN_NETWORK`.
+- Inicia el worker en un hilo dedicado, que retoma cualquier swap en curso desde su estado guardado.
 
 ---
 
 ## 🐳 Opción 2: Correr con Docker Compose
 
-Docker Compose monta de forma persistente la base de datos SQLite en un volumen nombrado (`swap_data`) y los archivos de credenciales de LND en modo sólo lectura (`ro`).
+Docker Compose genera los stubs gRPC en el build, monta la base SQLite en un volumen nombrado (`ln2oc_data`) y las credenciales de LND en modo sólo lectura (`ro`). El contenedor corre como usuario no-root con uid `APP_UID` (por defecto `1000`), que debe poder leer el macaroon. Por defecto se conecta a `host.docker.internal:10001` (`DOCKER_LND_GRPC_HOST`).
+
+> Ante un `MANUAL_REVIEW` el contenedor entra en un loop de reinicios que se niegan a arrancar. Es intencional: el servicio queda caído y visible hasta que alguien lo resuelva.
 
 ```bash
 docker compose up -d --build
@@ -115,16 +150,17 @@ docker compose down
 El proyecto incluye tests de integración que prueban contra tus nodos reales de Polar (`polar-n3-Kross`, `polar-n3-User` y `polar-n3-backend1`):
 
 ```bash
-PYTHONPATH=. .venv/bin/pytest tests/test_swap_e2e.py -v
+PYTHONPATH=. .venv/bin/pytest tests -v
 ```
 
-Los tests verifican:
-- Validación de direcciones (Bech32, Taproot y Base58 válidos/inválidos).
-- Rechazo de montos fuera de rango o por debajo del dust limit.
-- Control de saldo insuficiente y aislamiento de reservas concurrentes.
-- Cancelación de Hold Invoice si falla la transacción on-chain.
-- Recuperación y liquidación automática tras caídas del servidor.
-- **Flujo end-to-end completo**: Node B paga Hold Invoice con Lightning → Node A envía BTC on-chain → Se mina el bloque → Node B confirma recepción y la factura queda liquidada.
+Los tests corren contra Polar (Kross gRPC `10001`, User gRPC `10002`, bitcoind `polar-n3-backend1`) y verifican:
+- Validación de direcciones y conversión a scriptPubKey, montos fuera de rango, saldo insuficiente.
+- Lock de proceso exclusivo.
+- **Flujo end-to-end completo** con verificación en bitcoind de que el destino recibió exactamente el payout una sola vez.
+- **Reembolso** (invoice cancelada) cuando no hay fondos al momento del pago, cuando el fee real supera lo cobrado o cuando no hay margen de CLTV.
+- **Fallos ambiguos inyectados**: la respuesta de `FundPsbt`, del settle o de la publicación se pierde después de que LND ejecutó la operación. En todos los casos se paga exactamente una vez.
+- **Reinicio a mitad de payout**: un worker nuevo retoma la tx firmada y guardada.
+- **Fail loud**: invoice settleada por fuera del flujo y tx rechazada después del settle → `MANUAL_REVIEW` y el worker no procesa nada más.
 
 ---
 
@@ -164,7 +200,7 @@ Respuesta:
 
 #### Paso C: Pagar la Factura
 Paga el `pr` devuelto desde tu wallet Lightning (o nodo Polar del usuario). Inmediatamente:
-- El worker detectará el pago.
-- Transmitirá los sats a `bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz`.
-- Guardará el `txid` en la base de datos.
+- El worker detectará el pago retenido.
+- Fondeará, firmará y guardará la tx de payout (sin transmitirla).
 - Liquidará la factura en Lightning.
+- Transmitirá la tx guardada a `bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz`.

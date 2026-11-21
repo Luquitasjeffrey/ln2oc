@@ -1,15 +1,25 @@
-import os
 import hashlib
 import logging
+import os
+import threading
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from sqlalchemy import select, func
-from app.models import Swap, SwapStatus
-from app.lnd import lnd_client
-from app.validator import validate_bitcoin_address
-from app.fees import calculate_miner_fee, calculate_payout
+
 from app.config import settings
+from app.fees import FeeEstimateError, calculate_miner_fee, calculate_payout, current_fee_rate_sat_per_vbyte
+from app.halt import is_halted
+from app.lnd import LndError, LndUnavailable, lnd_client
+from app.models import ACTIVE_RESERVATION_STATUSES, Swap, SwapStatus
+from app.validator import validate_bitcoin_address
 
 logger = logging.getLogger("ln2oc.swaps")
+
+# Serializes "check available balance -> issue invoice -> persist reservation" inside
+# this process. Cross-process exclusivity is enforced by the worker's file lock: only
+# one process can run the service at all (see worker.acquire_process_lock).
+_reservation_lock = threading.Lock()
+
 
 class SwapError(Exception):
     def __init__(self, message: str, status_code: int = 400):
@@ -17,124 +27,109 @@ class SwapError(Exception):
         self.message = message
         self.status_code = status_code
 
-async def get_fee_rate_sat_per_vbyte() -> int:
-    try:
-        est = await lnd_client.estimate_fee(target_conf=2)
-        # LND /v1/fee-estimates returns sat_per_kw or fee_rate (sat per kw)
-        sat_per_kw = est.get("sat_per_kw")
-        if sat_per_kw:
-            sat_per_vbyte = int(sat_per_kw) // 250
-            return max(sat_per_vbyte, settings.MIN_SAT_PER_VBYTE)
-        fee_rate = est.get("fee_rate")
-        if fee_rate:
-            sat_per_vbyte = int(fee_rate) // 250
-            return max(sat_per_vbyte, settings.MIN_SAT_PER_VBYTE)
-    except Exception as e:
-        logger.warning("Failed to estimate fee from LND, using default: %s", e)
-    return settings.MIN_SAT_PER_VBYTE
 
 def get_reserved_balance_sat(db: Session) -> int:
-    """
-    Sum of (payout_sat + miner_fee_sat) for all active swaps:
-    PENDING, ACCEPTED, BROADCASTED.
-    """
-    active_statuses = [SwapStatus.PENDING, SwapStatus.ACCEPTED, SwapStatus.BROADCASTED]
+    """Sum of (payout_sat + miner_fee_sat) for every swap that may still need on-chain funds."""
     stmt = (
         select(func.coalesce(func.sum(Swap.payout_sat + Swap.miner_fee_sat), 0))
-        .where(Swap.status.in_(active_statuses))
+        .where(Swap.status.in_(ACTIVE_RESERVATION_STATUSES))
     )
     return int(db.execute(stmt).scalar() or 0)
 
-async def check_available_onchain_balance(db: Session, required_sat: int) -> int:
-    """
-    Checks that LND confirmed on-chain balance minus active reservations >= required_sat.
-    Returns confirmed on-chain balance.
-    """
-    bal = await lnd_client.get_blockchain_balance()
-    # confirmed_balance is the safe balance to spend
-    total_sat = int(bal.get("confirmed_balance", 0))
-    reserved_sat = get_reserved_balance_sat(db)
-    available_sat = total_sat - reserved_sat
-    if available_sat < required_sat:
-        raise SwapError(
-            f"Insufficient available on-chain balance: {available_sat} sats available, {required_sat} sats required.",
-            status_code=400
-        )
-    return available_sat
 
-async def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
+def get_available_onchain_balance_sat(db: Session) -> int:
+    bal = lnd_client.wallet_balance()
+    confirmed = int(bal.confirmed_balance)
+    # LND will not spend the reserve it keeps for anchor channel fee bumping.
+    anchor_reserve = int(bal.reserved_balance_anchor_chan)
+    return confirmed - anchor_reserve - get_reserved_balance_sat(db)
+
+
+def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     """
-    Creates and reserves a swap:
-    1. Validates Bitcoin address
-    2. Validates amount
-    3. Calculates miner fee & payout
-    4. Checks available on-chain balance
-    5. Creates LND Hold Invoice
-    6. Persists Swap record with status PENDING
+    Validates the request, reserves on-chain balance and issues a hold invoice.
+    The reservation is only advisory: the authoritative funds check happens when the
+    payment arrives (FundPsbt). If funds are missing then, the invoice is canceled.
     """
+    if is_halted():
+        raise SwapError("Service halted", status_code=503)
+
     if not validate_bitcoin_address(btc_address, settings.BITCOIN_NETWORK):
         raise SwapError(f"Invalid Bitcoin address for network '{settings.BITCOIN_NETWORK}': {btc_address}")
 
+    if amount_msat % 1000 != 0:
+        raise SwapError("Amount must be a whole number of satoshis.")
     amount_sat = amount_msat // 1000
     if amount_sat < settings.MIN_SWAP_SAT:
         raise SwapError(f"Amount {amount_sat} sat is below minimum {settings.MIN_SWAP_SAT} sat.")
     if amount_sat > settings.MAX_SWAP_SAT:
         raise SwapError(f"Amount {amount_sat} sat exceeds maximum {settings.MAX_SWAP_SAT} sat.")
 
-    sat_per_vbyte = await get_fee_rate_sat_per_vbyte()
+    try:
+        sat_per_vbyte = current_fee_rate_sat_per_vbyte(lnd_client)
+    except (FeeEstimateError, LndUnavailable, LndError) as e:
+        logger.error("Fee estimation unavailable, refusing swap: %s", e)
+        raise SwapError("On-chain fee estimation unavailable, try again later.", status_code=503)
+
     miner_fee_sat = calculate_miner_fee(sat_per_vbyte)
     payout_sat = calculate_payout(amount_sat, miner_fee_sat, settings.SWAP_FEE_RATE)
-
     if payout_sat < settings.MIN_PAYOUT_SAT:
         raise SwapError(
             f"Calculated payout of {payout_sat} sats is below dust limit ({settings.MIN_PAYOUT_SAT} sats). "
             f"(Amount: {amount_sat} sats, miner fee: {miner_fee_sat} sats, fee rate: {settings.SWAP_FEE_RATE * 100}%)"
         )
-
-    # Required sats to send on-chain = payout_sat + miner_fee_sat
     required_sat = payout_sat + miner_fee_sat
 
-    # Check on-chain balance (atomic reservation via DB transaction)
-    # Using SQLite WAL with immediate transaction or checking within the db session:
-    await check_available_onchain_balance(db, required_sat)
-
-    # Generate secret preimage and payment_hash
     preimage_bytes = os.urandom(32)
     payment_hash_bytes = hashlib.sha256(preimage_bytes).digest()
-    payment_hash_hex = payment_hash_bytes.hex()
-    preimage_hex = preimage_bytes.hex()
+    lock_id = os.urandom(32)
 
-    memo = f"Swap-out to {btc_address[:10]}...: {payout_sat} sats"
-    try:
-        inv = await lnd_client.add_hold_invoice(
-            payment_hash_bytes=payment_hash_bytes,
-            value_sat=amount_sat,
-            memo=memo,
-            expiry_seconds=3600,
+    with _reservation_lock:
+        try:
+            available = get_available_onchain_balance_sat(db)
+        except (LndUnavailable, LndError) as e:
+            logger.error("Could not read on-chain balance: %s", e)
+            raise SwapError("Lightning node unavailable, try again later.", status_code=503)
+        if available < required_sat:
+            raise SwapError(
+                f"Insufficient available on-chain balance: {available} sats available, {required_sat} sats required.",
+                status_code=400,
+            )
+
+        memo = f"Swap-out to {btc_address[:10]}...: {payout_sat} sats"
+        try:
+            inv = lnd_client.add_hold_invoice(
+                payment_hash=payment_hash_bytes,
+                value_sat=amount_sat,
+                memo=memo,
+                expiry_seconds=settings.INVOICE_EXPIRY_SECONDS,
+                cltv_expiry=settings.HOLD_INVOICE_CLTV_EXPIRY,
+            )
+        except (LndUnavailable, LndError) as e:
+            # If the invoice was created but we never answered, nobody has the payment
+            # request, so it cannot be paid; it simply expires.
+            logger.error("Failed to create LND hold invoice: %s", e)
+            raise SwapError("Failed to generate Lightning invoice with LND", status_code=502)
+
+        invoice_str = inv.payment_request
+        if not invoice_str:
+            raise SwapError("LND did not return payment_request", status_code=502)
+
+        swap = Swap(
+            payment_hash=payment_hash_bytes.hex(),
+            preimage=preimage_bytes.hex(),
+            btc_address=btc_address,
+            amount_sat=amount_sat,
+            payout_sat=payout_sat,
+            miner_fee_sat=miner_fee_sat,
+            invoice=invoice_str,
+            lock_id=lock_id.hex(),
+            status=SwapStatus.PENDING,
         )
-    except Exception as e:
-        logger.error("Failed to create LND hold invoice: %s", e)
-        raise SwapError("Failed to generate Lightning invoice with LND", status_code=502)
+        db.add(swap)
+        db.commit()
+        db.refresh(swap)
 
-    invoice_str = inv.get("payment_request")
-    if not invoice_str:
-        raise SwapError("LND did not return payment_request", status_code=502)
-
-    swap = Swap(
-        payment_hash=payment_hash_hex,
-        preimage=preimage_hex,
-        btc_address=btc_address,
-        amount_sat=amount_sat,
-        payout_sat=payout_sat,
-        miner_fee_sat=miner_fee_sat,
-        invoice=invoice_str,
-        txid=None,
-        status=SwapStatus.PENDING,
-    )
-
-    db.add(swap)
-    db.commit()
-    db.refresh(swap)
-    logger.info("Created swap %s for address %s, amount %d sat, payout %d sat",
-                swap.id, btc_address, amount_sat, payout_sat)
+    logger.info("Created swap %s for address %s, amount %d sat, payout %d sat, max miner fee %d sat",
+                swap.id, btc_address, amount_sat, payout_sat, miner_fee_sat)
     return swap
