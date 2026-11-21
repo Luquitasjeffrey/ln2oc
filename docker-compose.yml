@@ -1,0 +1,32 @@
+services:
+  swapservice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ln2oc-swapservice
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - LND_REST_HOST=${DOCKER_LND_REST_HOST:-host.docker.internal:8081}
+      - LND_MACAROON_PATH=/lnd/admin.macaroon
+      - LND_TLS_CERT_PATH=/lnd/tls.cert
+      - BITCOIN_NETWORK=${BITCOIN_NETWORK:-regtest}
+      - SWAP_FEE_RATE=${SWAP_FEE_RATE:-0.006}
+      - MIN_PAYOUT_SAT=${MIN_PAYOUT_SAT:-546}
+      - MIN_SWAP_SAT=${MIN_SWAP_SAT:-1000}
+      - MAX_SWAP_SAT=${MAX_SWAP_SAT:-50000000}
+      - MIN_SAT_PER_VBYTE=${MIN_SAT_PER_VBYTE:-1}
+      - DOMAIN=${DOMAIN:-127.0.0.1:8000}
+      - EXTERNAL_URL=${EXTERNAL_URL:-http://127.0.0.1:8000}
+      - DATABASE_URL=sqlite:////data/swapservice.db
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - swap_data:/data
+      - ${LND_MACAROON_PATH:-/home/lucas/.polar/networks/3/volumes/lnd/Kross/data/chain/bitcoin/regtest/admin.macaroon}:/lnd/admin.macaroon:ro
+      - ${LND_TLS_CERT_PATH:-/home/lucas/.polar/networks/3/volumes/lnd/Kross/tls.cert}:/lnd/tls.cert:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  swap_data:
