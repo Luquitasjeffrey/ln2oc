@@ -184,7 +184,7 @@ export default function Usuario() {
         <p>
           Con {fmt(x.amount)} sats y {x.live ? "la minería de ahora" : "una minería de"} {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ={" "}
           <b className="btc num">{fmt(x.payout)} sats</b>
-          . Tu tx sale a la tasa que te cotizaron; si termina pesando un poco más que el presupuesto, la diferencia la pone el operador. Con fees altos, los montos chicos se rechazan: el payout tiene que quedar por encima del dust ({fmt(x.info.min_payout_sat)} sats).
+          . La minería se descuenta siempre de tu pago, a la tasa del momento en que pediste la invoice. Con fees altos, los montos chicos se rechazan: el payout tiene que quedar por encima del dust ({fmt(x.info.min_payout_sat)} sats).
         </p>
       </section>
       <section aria-labelledby="h-what">
