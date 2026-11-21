@@ -2,6 +2,11 @@
 
 Servicio minimalista y confiable de **Lightning → Bitcoin On-chain Swap-out** implementado en Python 3.12+ con FastAPI, SQLite (SQLAlchemy 2.x), la API gRPC de LND y Docker Compose.
 
+- **Pensado para montos chicos**: usuarios que quieren pasar a on-chain hasta 1.000.000 sats por swap (`MAX_SWAP_SAT`), con una comisión del 0,7 % por defecto (`SWAP_FEE_RATE`, configurable).
+- **Servicio aislado**: corre con su propio nodo LND dedicado y su propio dominio. No lo corras en tu nodo principal ni en uno con mucha plata.
+- **Levantá tu propia instancia**: cualquiera puede correr la suya, con su nodo, su dominio y su comisión.
+- **Saldo on-chain manual**: en esta versión, reponer el saldo on-chain del nodo (convirtiendo en bloque lo que se juntó en Lightning, o cerrando canales) queda a cargo del operador.
+
 ---
 
 ## 📖 ¿Cómo funciona?
@@ -74,9 +79,9 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `LND_MACAROON_PATH` | Ruta absoluta al archivo `admin.macaroon` | `/ruta/.../admin.macaroon` |
 | `LND_TLS_CERT_PATH` | Ruta absoluta al certificado `tls.cert` | `/ruta/.../tls.cert` |
 | `BITCOIN_NETWORK` | Red Bitcoin objetivo (`regtest`, `testnet`, `mainnet`) | `regtest` |
-| `SWAP_FEE_RATE` | Tasa de comisión del servicio (spread) | `0.006` (0.6%) |
+| `SWAP_FEE_RATE` | Tasa de comisión del servicio (spread) | `0.007` (0.7%) |
 | `MIN_SWAP_SAT` | Monto mínimo permitido en satoshis | `1000` |
-| `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `50000000` |
+| `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `1000000` |
 | `MIN_PAYOUT_SAT` | Límite mínimo de polvo (dust limit) | `546` |
 | `MIN_SAT_PER_VBYTE` | Tasa de minería mínima (sat/vB) | `1` |
 | `MAX_SAT_PER_VBYTE` | Si LND estima más que esto, se rechazan swaps / se reembolsa | `500` |
@@ -182,7 +187,7 @@ Respuesta esperada:
   "tag": "payRequest",
   "callback": "http://127.0.0.1:8000/lnurlp/cb?btc_address=bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz",
   "minSendable": 1000000,
-  "maxSendable": 50000000000,
+  "maxSendable": 1000000000,
   "metadata": "[[\"text/plain\", \"Swap out BTC to bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz\"], [\"text/identifier\", \"bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz@127.0.0.1:8000\"]]",
   "commentAllowed": 0
 }

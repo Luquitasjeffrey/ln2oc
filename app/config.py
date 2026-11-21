@@ -15,10 +15,10 @@ class Settings(BaseSettings):
 
     # Bitcoin & Swaps
     BITCOIN_NETWORK: str = "regtest"  # mainnet, testnet, regtest
-    SWAP_FEE_RATE: float = 0.006     # 0.6%
+    SWAP_FEE_RATE: float = 0.007     # 0.7% (configurable)
     MIN_PAYOUT_SAT: int = 546        # Dust limit
     MIN_SWAP_SAT: int = 1000
-    MAX_SWAP_SAT: int = 50_000_000
+    MAX_SWAP_SAT: int = 1_000_000   # aimed at small swaps (<= 1M sats)
 
     # On-chain fees
     MIN_SAT_PER_VBYTE: int = 1
