@@ -346,7 +346,7 @@ export default function Arquitectura() {
             <code>
               ACCEPTED
             </code>
-            {" "}y lo único que se hace es mirar el saldo, con una simulación de la tx en LND que no reserva nada: si no alcanza, o si la minería dejaría el payout en dust, se cancela y el pagador no pierde nada. A la derecha, la invoice ya está{" "}
+            {" "}y lo único que se hace es esperar a que la wallet on-chain no tenga ninguna tx sin confirmar y mirar el saldo, con una simulación de la tx en LND que no reserva nada: si no alcanza, o si la minería dejaría el payout en dust, se cancela y el pagador no pierde nada. A la derecha, la invoice ya está{" "}
             <code>
               SETTLED
             </code>
@@ -372,7 +372,7 @@ export default function Arquitectura() {
               <code>
                 ACCEPTED
               </code>
-              {" "}lo único que se hace es chequear el saldo y que la minería, aun en su tope (2× la estimada), no deje el payout en dust. Al firmar se paga la tasa del momento, hasta ese tope.
+              {" "}lo único que se hace es esperar a que no quede ninguna tx de la wallet en la mempool (entrante o saliente: mientras haya una no se chequea ni se cancela nada), chequear el saldo y que la minería, aun en su tope (2× la estimada), no deje el payout en dust. Al firmar se paga la tasa del momento, hasta ese tope.
             </span>
           </li>
           <li>

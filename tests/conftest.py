@@ -52,6 +52,19 @@ def mine_blocks(num_blocks: int = 1) -> None:
     raise RuntimeError("LND did not sync after mining")
 
 
+def send_to_kross_unconfirmed(btc: float) -> str:
+    """bitcoind pays a fresh address of Kross's wallet, unconfirmed. Returns the txid
+    once LND has seen it."""
+    lnd, _, _ = lnd_client._stubs()
+    addr = lnd_client._call(lnd.NewAddress, ln.NewAddressRequest(type=ln.WITNESS_PUBKEY_HASH), "NewAddress").address
+    txid = bitcoin_cli("sendtoaddress", addr, str(btc))
+    for _ in range(50):
+        if txid in lnd_client.unconfirmed_txids(lnd_client.get_info().block_height):
+            return txid
+        time.sleep(0.2)
+    raise RuntimeError("LND did not see the unconfirmed deposit")
+
+
 def new_dest_address() -> str:
     return bitcoin_cli("getnewaddress", "", "bech32")
 
@@ -98,6 +111,10 @@ class FatalRecorder:
 @pytest.fixture
 def env(tmp_path):
     """Fresh SQLite DB + a worker bound to it whose 'halt' only records the reason."""
+    # Payouts wait for every wallet tx to confirm: a tx left in the mempool (e.g. by an
+    # aborted run) would hold every payment of this test.
+    if lnd_client.unconfirmed_txids(lnd_client.get_info().block_height):
+        mine_blocks(1)
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}", connect_args={"check_same_thread": False}, future=True)
     Session = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
     Base.metadata.create_all(bind=engine)

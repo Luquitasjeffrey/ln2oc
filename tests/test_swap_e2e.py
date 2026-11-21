@@ -19,7 +19,7 @@ from app.validator import address_to_script
 from app.worker import SwapWorker
 from tests.conftest import (
     get_bitcoind_tx, get_swap, insert_swap, leases_for, mine_blocks, new_dest_address,
-    received_by, tick_until, wait_for_status,
+    received_by, send_to_kross_unconfirmed, tick_until, wait_for_status,
 )
 
 REGTEST_ADDR = "bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz"
@@ -260,12 +260,50 @@ def test_concurrent_payments_are_paid_one_after_another(env, payer):
         _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
     worker = _polling_worker(env, poll_interval=300)
     worker.start()
-    for (swap_id, dest, _), payment in zip(swaps, payments):
+    for i, ((swap_id, dest, _), payment) in enumerate(zip(swaps, payments)):
         swap = wait_for_status(env["Session"], swap_id, _DONE, timeout=60)
+        assert swap.status == SwapStatus.BROADCASTED, swap.error
         assert payment.result(timeout=60).payment_error == "", swap.error
         assert_paid_exactly_once(swap, dest)
+        # The next held payments wait for this payout to confirm: nothing checked, nothing refunded.
+        time.sleep(1.5)
+        for later_id, _, _ in swaps[i + 1:]:
+            later = get_swap(env["Session"], later_id)
+            assert later.status in (SwapStatus.PENDING, SwapStatus.SETTLING), later.status
+            assert lnd_client.lookup_invoice(bytes.fromhex(later.payment_hash)).state == InvoiceState.ACCEPTED
+        mine_blocks(1)
     assert not env["fatal"].reasons, env["fatal"].reasons
     worker.stop()
+
+
+def test_unconfirmed_deposit_holds_payment_until_it_confirms(env, payer, monkeypatch):
+    """Any wallet tx in the mempool (here an incoming deposit) postpones the payout: the
+    balance is not even checked, the payment stays held, nothing is settled or refunded."""
+    deposit_txid = send_to_kross_unconfirmed(0.001)
+    dest = new_dest_address()
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, gross_sat=40_000, address=dest)
+    payment = payer.pay(invoice)
+    _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
+    assert deposit_txid in lnd_client.unconfirmed_txids(lnd_client.get_info().block_height)
+
+    calls = []
+    real_balance, real_settle = lnd_client.wallet_balance, lnd_client.settle_invoice
+    monkeypatch.setattr(lnd_client, "wallet_balance", lambda: calls.append("balance") or real_balance())
+    monkeypatch.setattr(lnd_client, "settle_invoice", lambda p: calls.append("settle") or real_settle(p))
+    for _ in range(5):
+        assert env["worker"].run_tick_guarded() is True  # blocked: retry soon
+    swap = get_swap(env["Session"], swap_id)
+    assert swap.status == SwapStatus.SETTLING and swap.max_miner_fee_sat is None, swap.status
+    assert calls == []
+    assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.ACCEPTED
+    assert not payment.done()
+
+    mine_blocks(1)
+    swap = tick_until(env, swap_id, _DONE)
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    assert swap.status == SwapStatus.BROADCASTED, swap.error
+    assert payment.result(timeout=60).payment_error == ""
+    assert_paid_exactly_once(swap, dest)
     mine_blocks(1)
 
 

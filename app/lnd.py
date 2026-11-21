@@ -130,6 +130,15 @@ class LndClient:
         lnd, _, _ = self._stubs()
         return self._call(lnd.WalletBalance, ln.WalletBalanceRequest(), "WalletBalance")
 
+    def unconfirmed_txids(self, from_height: int) -> list[str]:
+        """Wallet txs (incoming or outgoing, channel txs included) with no confirmation yet.
+        Lists from from_height (inclusive) through the tip plus the unconfirmed ones, and
+        keeps only the unconfirmed: a block found in between cannot hide anything."""
+        lnd, _, _ = self._stubs()
+        req = ln.GetTransactionsRequest(start_height=from_height, end_height=-1)
+        resp = self._call(lnd.GetTransactions, req, "GetTransactions")
+        return [t.tx_hash for t in resp.transactions if t.num_confirmations < 1]
+
     def estimate_fee_sat_per_kw(self, conf_target: int) -> int:
         _, _, wallet = self._stubs()
         resp = self._call(wallet.EstimateFee, wk.EstimateFeeRequest(conf_target=conf_target), "EstimateFee")
