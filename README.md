@@ -79,7 +79,7 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `LND_TLS_SERVER_NAME` | Nombre a verificar en el cert TLS de LND si el host usado no está en sus SANs | vacío |
 | `LND_MACAROON_PATH` | Ruta absoluta al archivo `admin.macaroon` | `/ruta/.../admin.macaroon` |
 | `LND_TLS_CERT_PATH` | Ruta absoluta al certificado `tls.cert` | `/ruta/.../tls.cert` |
-| `BITCOIN_NETWORK` | Red Bitcoin objetivo (`regtest`, `testnet`, `mainnet`) | `regtest` |
+| `BITCOIN_NETWORK` | Red Bitcoin objetivo (`regtest`, `testnet` = testnet3, `testnet4`, `mainnet`). Para probar en testnet4 ver [`docs/testnet4.md`](docs/testnet4.md) | `regtest` |
 | `SWAP_FEE_RATE` | Tasa de comisión del servicio (spread) | `0.007` (0.7%) |
 | `MIN_SWAP_SAT` | Monto mínimo permitido en satoshis | `1000` |
 | `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `1000000` |

@@ -58,12 +58,12 @@ Invariantes (ver `app/worker.py`):
 
 | Archivo | Rol |
 |---|---|
-| `app/lnurl.py` | Endpoints LNURL-pay (`/.well-known/lnurlp/{addr}`, `/lnurlp/cb`), handlers sync |
+| `app/lnurl.py` | Endpoints LNURL-pay (`/.well-known/lnurlp/{addr}`, `/lnurlp/cb`), handlers sync, `Access-Control-Allow-Origin: *` (LUD-01) |
 | `app/swaps.py` | `create_swap` |
 | `app/worker.py` | Máquina de estados y polling de invoices; único componente que mueve plata |
 | `app/lnd.py` | Cliente gRPC; `LndUnavailable` vs `LndError` |
 | `app/tx.py` | Parser estricto de tx (txid, inputs, outputs) y reescritura de montos en el PSBT v0 sin firmar |
-| `app/validator.py` | Direcciones bech32/bech32m/base58 → scriptPubKey |
+| `app/validator.py` | Direcciones → scriptPubKey. Swaps nuevos: **solo bech32 v0 y bech32m v1** (`validate_bitcoin_address`; la Lightning Address va en minúsculas, LUD-16, y base58 distingue mayúsculas). `address_to_script` sigue decodificando base58 para no trabar el payout de un swap ya guardado |
 | `app/fees.py` | Tasa de minería (sat/kw → sat/vB) y `calculate_gross` (enteros, basis points). No hay tamaño de tx fijo: la minería sale de la tx real |
 | `app/halt.py` | `FatalSwapError`, `halt_process` |
 | `app/info.py` | `GET /` → redirect a `FRONTEND_URL`; `GET /api/info` (parámetros de la instancia, commit) |
@@ -71,6 +71,8 @@ Invariantes (ver `app/worker.py`):
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
 | `app/config.py` | Settings con validación (falla al arrancar si algo está fuera de rango) |
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
+| `scripts/lnaddr_pay.py` | Cliente de prueba: resuelve y valida una Lightning Address como una wallet (LUD-16/06/01) y la paga desde un LND propio |
+| `docs/testnet4.md` | Cómo levantar y probar una instancia en testnet4 |
 
 ## Correr y testear
 
@@ -100,14 +102,14 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 3. Macaroon con permisos mínimos (diferido por el usuario).
 
 **El artifact lo promete y el código no lo cumple del todo**
-4. **`description_hash` = sha256(metadata) en la hold invoice (LUD-06).** Sin eso muchas wallets rechazan la invoice. Es el mayor riesgo de que no funcione en la práctica.
+4. **`description_hash` en la hold invoice: ya no es obligatorio.** LUD-06 sacó el requisito (lnurl/luds PR #234, mergeado en mayo de 2026). Phoenix y BlueWallet no lo exigen; ZEUS solo rechaza si la invoice trae un `h` que no coincide, y una invoice sin `h` la acepta. Hoy mandamos `memo` sin `h`. Agregarlo (sha256 de la metadata exacta, en `AddHoldInvoice.description_hash`) solo ayudaría con wallets viejas. Baja prioridad; confirmarlo en la prueba de testnet4 (9).
 5. **`minSendable` dinámico** según el fee del momento (hoy fijo en `MIN_SWAP_SAT`; un monto que no cubre minería + dust recién se detecta con el pago retenido y se reembolsa).
 
 **Antes de mainnet**
 6. Alertas activas (halt, MANUAL_REVIEW, LND sin responder).
 7. Backup continuo de la SQLite (preimages, raw tx) y SCB de LND.
 8. Tope de payouts por hora/día y kill switch manual.
-9. Prueba en testnet/signet con wallets reales (signet no está soportado hoy).
+9. Prueba en testnet4 con wallets reales. Preparada: `BITCOIN_NETWORK=testnet4`, guía en `docs/testnet4.md`, `.env.testnet4.example` y `scripts/lnaddr_pay.py` (paga una Lightning Address como una wallet, contra el dominio real). Falta: nodos, dominio con HTTPS y la prueba en sí. No se confirmó ninguna wallet móvil que pague Lightning Address en testnet4 (candidata: ZEUS remoto contra el LND pagador). Signet no está soportado.
 
 **Operativo**
 10. Nodo y dominio dedicados, HTTPS con reverse proxy, `DOMAIN=ln2oc.com`, `EXTERNAL_URL=https://ln2oc.com`.
@@ -118,4 +120,4 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
 14. **Wallet con una tx que nunca confirma frena todos los payouts** (baja prioridad: al atacante le cuesta plata y no gana nada). Ataque: mandar una tx chica a nuestra dirección de cambio (visible en cualquier payout) y reemplazarla por RBF; btcwallet puede seguir mostrándola sin confirmar para siempre. Lo mismo pasa sin atacante si nuestro payout se traba por una suba de minería. Efecto: cada pago queda retenido ~16 h (margen CLTV) y después se reembolsa, los HTLC traban canales y siguen entrando órdenes. No se pierden fondos. Opciones: frenar solo por txs que gastan UTXOs propios (`previous_outpoints[].is_our_output`; los depósitos sin confirmar no afectan con `ONCHAIN_MIN_CONFS=1`), 503 en `create_swap` cuando el worker lleva X min frenado, tope de espera menor que el CLTV, alerta (6). Remedio manual: `lncli wallet removetx`.
 
-Orden propuesto: 4, 5 → 6, 11 → 7, 8, 9. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)
+Orden propuesto: 9 (testnet4) → 5 → 6, 11 → 7, 8; el 4 según lo que muestre la prueba. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)
