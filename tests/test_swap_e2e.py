@@ -50,7 +50,6 @@ def assert_paid_exactly_once(swap, dest: str):
     assert tx["txid"] == swap.txid == parse_tx(bytes.fromhex(swap.raw_tx)).txid
     assert received_by(dest) == swap.payout_sat  # nothing else ever paid to this address
     assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.SETTLED
-    assert swap.actual_fee_sat <= swap.miner_fee_sat
     # Leases are kept on the (now spent) inputs until they expire; they must be exactly ours.
     inputs = {(i.txid, i.vout) for i in parse_tx(bytes.fromhex(swap.raw_tx)).inputs}
     leased = {(l.outpoint.txid_str, l.outpoint.output_index) for l in leases_for(swap.lock_id)}
@@ -370,7 +369,55 @@ def test_payout_uses_the_fee_rate_charged_to_the_user(env, payer):
     assert payment.result(timeout=60).payment_error == ""
     assert swap.status == SwapStatus.BROADCASTED, swap.error
     assert swap.actual_fee_sat <= 2 * 200  # ~131 vB at 2 sat/vB; at 25 sat/vB it would be ~3.275
+    assert swap.payout_sat + swap.actual_fee_sat == 40_000 + 320  # user pays the real fee, not the budget
+    assert_paid_exactly_once(swap, dest)
     mine_blocks(1)
+
+
+def _pay_with_budget(env, payer, miner_fee_sat):
+    dest = new_dest_address()
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                   miner_fee_sat=miner_fee_sat, address=dest)
+    payment = payer.pay(invoice)
+    swap = tick_until(env, swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    assert payment.result(timeout=60).payment_error == ""
+    assert_paid_exactly_once(swap, dest)
+    mine_blocks(1)
+    return swap
+
+
+def test_user_gets_back_what_the_estimate_overcharged(env, payer):
+    """Budget far above the real fee: the excess goes to the user, not to the operator.
+    Wallet outflow is exactly payout + miner_fee_sat as quoted; the operator keeps only the service fee."""
+    budget = current_miner_fee() + 5_000
+    swap = _pay_with_budget(env, payer, budget)
+    assert swap.actual_fee_sat < budget
+    assert swap.payout_sat == 40_000 + budget - swap.actual_fee_sat
+    tx = parse_tx(bytes.fromhex(swap.raw_tx))
+    assert len(tx.outputs) == 2
+
+
+def test_user_pays_a_heavier_tx_than_estimated(env, payer):
+    """Budget below the real fee: the user pays the real fee, the operator does not absorb it."""
+    swap = _pay_with_budget(env, payer, 50)
+    assert swap.actual_fee_sat > 50
+    assert swap.payout_sat == 40_000 + 50 - swap.actual_fee_sat
+
+
+def test_psbt_output_values_are_rewritten_in_place():
+    from app.tx import psbt_set_output_values, psbt_unsigned_tx
+    unsigned = bytes.fromhex(
+        "02000000" "01" + "11" * 32 + "00000000" "00" "fdffffff"
+        "02" + (1000).to_bytes(8, "little").hex() + "160014" + "22" * 20
+        + (5000).to_bytes(8, "little").hex() + "160014" + "33" * 20 + "00000000")
+    psbt = b"psbt\xff" + b"\x01\x00" + bytes([len(unsigned)]) + unsigned + b"\x00" + b"\x00" + b"\x00\x00"
+    out = psbt_set_output_values(psbt, {0: 1200, 1: 4800})
+    assert len(out) == len(psbt)
+    assert [o.value for o in psbt_unsigned_tx(out).outputs] == [1200, 4800]
+    with pytest.raises(ValueError):
+        psbt_set_output_values(psbt, {2: 1})
+    with pytest.raises(ValueError):
+        psbt_unsigned_tx(b"psbu" + psbt[4:])
 
 
 def test_insufficient_cltv_margin_refunds_payer(env, payer, monkeypatch):

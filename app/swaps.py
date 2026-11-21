@@ -92,7 +92,8 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
             status_code=400,
         )
 
-    memo = f"Swap-out to {btc_address[:10]}...: {payout_sat} sats"
+    # payout_sat is an estimate: the real miner fee (at sat_per_vbyte) is deducted at payout.
+    memo = f"Swap-out to {btc_address[:10]}...: ~{payout_sat} sats (miner fee at {sat_per_vbyte} sat/vB deducted)"
     try:
         inv = lnd_client.add_hold_invoice(
             payment_hash=payment_hash_bytes,

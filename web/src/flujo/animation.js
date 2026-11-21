@@ -333,7 +333,7 @@ export function mountFlow(root) {
         coin(x + 34, y + 72, C.gold, 12, a);
         text("UTXO", x + 34, y + 104, { font: `12px ${MONO}`, color: C.dim, align: "center", alpha: a });
         arrow(x + 58, y + 72, x + 112, y + 72, a > 0 ? 1 : 0, C.dim, 1.5);
-        text("99.140 → bc1qmefue…", x + 122, y + 62, { font: `14px ${MONO}`, color: C.gold, alpha: a });
+        text("99.169 → bc1qmefue…", x + 122, y + 62, { font: `14px ${MONO}`, color: C.gold, alpha: a });
         text("cambio → nodo", x + 122, y + 84, { font: `13px ${MONO}`, color: C.dim, alpha: a });
         text("minería 131 (1 sat/vB)", x + 122, y + 104, { font: `13px ${MONO}`, color: C.dim, alpha: a });
         const signed = P("fund", 0.6, 0.75);
@@ -358,7 +358,7 @@ export function mountFlow(root) {
       }
       const arrived = P("publish", 0.9, 1);
       for (let i = 0; i < 4; i++) { const c = coldCoin(i); coin(c.x, c.y, C.gold, 11, arrived); }
-      text("+99.140 sats", COLD.x + COLD.w / 2, 326, { font: `16px ${MONO}`, color: C.green, align: "center", alpha: arrived });
+      text("+99.169 sats", COLD.x + COLD.w / 2, 326, { font: `16px ${MONO}`, color: C.green, align: "center", alpha: arrived });
     } else {
       // ---------------- fail: balance check says no
       const tryF = P("fail", 0, 0.3);
@@ -443,7 +443,7 @@ export function mountFlow(root) {
     ctx.beginPath(); ctx.moveTo(290, 340); ctx.lineTo(1120, 340); ctx.stroke(); ctx.restore();
     const v = fail
       ? [["0", "0", "—"], ["—", "0", "0"], ["0", "0", "0"]]
-      : [["−100.000", "+100.000", "—"], ["—", "−99.271", "+99.140"], ["−100.000", "+729", "+99.140"]];
+      : [["−100.000", "+100.000", "—"], ["—", "−99.300", "+99.169"], ["−100.000", "+700", "+99.169"]];
     const colr = (s) => (s.startsWith("+") ? C.green : s.startsWith("−") ? C.red : C.dim);
     v.forEach((row, r) => row.forEach((s, c) => {
       const w = P("ledger", 0.15 + 0.1 * r, 0.35 + 0.1 * r);
@@ -505,9 +505,9 @@ export function mountFlow(root) {
     text("Tu cold wallet", CW.x + CW.w / 2, CW.y + 46, { font: `600 26px ${SERIF}`, align: "center", alpha: sideA });
     text("tus llaves, offline", CW.x + CW.w / 2, CW.y + 72, { font: `italic 18px ${SERIF}`, color: C.dim, align: "center", alpha: sideA });
     const in1 = P("u-pay", 0.85, 1), in2 = P("u-p2p", 0.9, 1);
-    text("+99.140 sats", CW.x + 24, CW.y + 122, { font: `600 22px ${SERIF}`, color: C.green, alpha: in1 });
+    text("+99.169 sats", CW.x + 24, CW.y + 122, { font: `600 22px ${SERIF}`, color: C.green, alpha: in1 });
     text("desde tu wallet LN", CW.x + 24, CW.y + 142, { font: `12px ${MONO}`, color: C.dim, alpha: in1 });
-    text("+99.140 sats", CW.x + 24, CW.y + 178, { font: `600 22px ${SERIF}`, color: C.green, alpha: in2 });
+    text("+99.169 sats", CW.x + 24, CW.y + 178, { font: `600 22px ${SERIF}`, color: C.green, alpha: in2 });
     text("trade P2P", CW.x + 24, CW.y + 198, { font: `12px ${MONO}`, color: C.dim, alpha: in2 });
 
     // the phone (hidden while the P2P trade card is shown)

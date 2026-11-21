@@ -38,7 +38,7 @@ from app.db import SessionLocal
 from app.halt import FatalSwapError, halt_process
 from app.lnd import HtlcState, InvoiceState, LndClient, LndError, LndUnavailable, lnd_client
 from app.models import Swap, SwapStatus
-from app.tx import parse_tx
+from app.tx import parse_tx, psbt_set_output_values, psbt_unsigned_tx
 from app.validator import address_to_script
 
 logger = logging.getLogger("ln2oc.worker")
@@ -414,23 +414,67 @@ class SwapWorker:
             )
         except LndError as e:
             raise FatalSwapError(swap.id, f"cannot fund payout after settle ({owed}): {e.message}")
+        psbt, payout = self._charge_actual_fee(swap, funded, owed)
         try:
-            final = self.lnd.finalize_psbt(funded.funded_psbt)
+            final = self.lnd.finalize_psbt(psbt)
         except LndError as e:
             raise FatalSwapError(swap.id, f"cannot sign payout after settle ({owed}): {e.message}")
 
         raw = bytes(final.raw_final_tx)
-        txid, fee = self._verify_payout_tx(swap, raw, funded, lock_id)
-        if fee > swap.miner_fee_sat:
-            logger.warning("Swap %s: actual miner fee %d sat exceeds charged %d sat; operator absorbs %d sat",
-                           swap.id, fee, swap.miner_fee_sat, fee - swap.miner_fee_sat)
+        txid, fee = self._verify_payout_tx(swap, raw, funded, lock_id, payout)
+        gross = swap.payout_sat + swap.miner_fee_sat
+        if payout != swap.payout_sat and payout + fee != gross:
+            raise FatalSwapError(swap.id, f"adjusted payout {payout} + fee {fee} != {gross} ({owed})")
 
+        # payout_sat becomes what is actually paid; the quote is payout_sat + miner_fee_sat - actual_fee_sat.
         self._transition(db, swap, SwapStatus.PAID, SwapStatus.SIGNED,
-                         raw_tx=raw.hex(), txid=txid, actual_fee_sat=fee)
-        logger.info("Swap %s: payout tx %s signed and stored (fee %d sat, %d sat/vB), not broadcast yet",
-                    swap.id, txid, fee, swap.fee_rate_sat_vb)
+                         raw_tx=raw.hex(), txid=txid, actual_fee_sat=fee, payout_sat=payout)
+        logger.info("Swap %s: payout tx %s signed and stored (%d sat to user, fee %d sat at %d sat/vB), "
+                    "not broadcast yet", swap.id, txid, payout, fee, swap.fee_rate_sat_vb)
 
-    def _verify_payout_tx(self, swap: Swap, raw: bytes, funded, lock_id: bytes) -> tuple[str, int]:
+    def _charge_actual_fee(self, swap: Swap, funded, owed: str) -> tuple[bytes, int]:
+        """The user pays the real miner fee, not the 160 vB estimate: the destination gets
+        (payout + miner_fee_sat) - real fee, and the difference moves to/from our change.
+        Only amounts change, so the tx size and its fee stay the same. The operator keeps
+        exactly the service fee. If there is no change to move it against (or it would be
+        dust), the quoted payout is kept and the difference is logged."""
+        try:
+            tx = psbt_unsigned_tx(funded.funded_psbt)
+        except ValueError as e:
+            raise FatalSwapError(swap.id, f"cannot read funded PSBT ({owed}): {e}")
+        dest_script = address_to_script(swap.btc_address, settings.BITCOIN_NETWORK)
+        dest = [i for i, o in enumerate(tx.outputs) if o.script == dest_script]
+        if len(dest) != 1 or tx.outputs[dest[0]].value != swap.payout_sat:
+            raise FatalSwapError(swap.id, f"funded PSBT does not pay {swap.payout_sat} sat once to destination ({owed})")
+        d = dest[0]
+        fee = sum(u.value for u in funded.locked_utxos) - sum(o.value for o in tx.outputs)
+        delta = swap.miner_fee_sat - fee  # > 0: user overpaid the estimate; < 0: tx is heavier
+        if delta == 0:
+            return funded.funded_psbt, swap.payout_sat
+
+        c = funded.change_output_index
+        new_payout = swap.payout_sat + delta
+        if c < 0 or c == d or c >= len(tx.outputs):
+            reason = "no change output"
+        elif tx.outputs[c].value - delta < settings.MIN_PAYOUT_SAT:
+            reason = "change would be dust"
+        elif new_payout < settings.MIN_PAYOUT_SAT:
+            reason = "payout would be dust"
+        else:
+            try:
+                psbt = psbt_set_output_values(funded.funded_psbt,
+                                              {d: new_payout, c: tx.outputs[c].value - delta})
+            except ValueError as e:
+                raise FatalSwapError(swap.id, f"cannot adjust funded PSBT ({owed}): {e}")
+            logger.info("Swap %s: real miner fee %d sat vs %d budgeted; payout %d -> %d sat",
+                        swap.id, fee, swap.miner_fee_sat, swap.payout_sat, new_payout)
+            return psbt, new_payout
+        logger.warning("Swap %s: real miner fee %d sat vs %d budgeted, %s: paying the quoted %d sat; "
+                       "operator %s %d sat", swap.id, fee, swap.miner_fee_sat, reason, swap.payout_sat,
+                       "keeps" if delta > 0 else "absorbs", abs(delta))
+        return funded.funded_psbt, swap.payout_sat
+
+    def _verify_payout_tx(self, swap: Swap, raw: bytes, funded, lock_id: bytes, payout: int) -> tuple[str, int]:
         """Independent check of what LND signed. Any surprise is fatal."""
         try:
             tx = parse_tx(raw)
@@ -443,8 +487,8 @@ class SwapWorker:
 
         change_idx = funded.change_output_index
         dest_idx = [i for i, o in enumerate(tx.outputs) if o.script == dest_script]
-        if len(dest_idx) != 1 or tx.outputs[dest_idx[0]].value != swap.payout_sat:
-            raise FatalSwapError(swap.id, f"payout tx does not pay exactly {swap.payout_sat} sat once to destination")
+        if len(dest_idx) != 1 or tx.outputs[dest_idx[0]].value != payout:
+            raise FatalSwapError(swap.id, f"payout tx does not pay exactly {payout} sat once to destination")
         for i in range(len(tx.outputs)):
             if i != dest_idx[0] and i != change_idx:
                 raise FatalSwapError(swap.id, f"payout tx has unexpected output #{i}")

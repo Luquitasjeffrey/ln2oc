@@ -176,15 +176,15 @@ export default function Usuario() {
           Cuánto te llega
         </h2>
         <p>
-          Dos descuentos y nada más: la comisión fija del servicio y la minería de tu transacción, presupuestada con la estimación de fee del nodo al momento de pedir la invoice.
+          Dos descuentos y nada más: la comisión fija del servicio y la minería real de tu transacción, a la tasa que estima el nodo al momento de pedir la invoice.
         </p>
         <div className="formula">
-          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − {x.vbytes} vB × sat/vB
+          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − minería real (≈ {x.vbytes} vB × sat/vB)
         </div>
         <p>
-          Con {fmt(x.amount)} sats y {x.live ? "la minería de ahora" : "una minería de"} {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ={" "}
+          Con {fmt(x.amount)} sats y {x.live ? "la minería de ahora" : "una minería de"} {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ≈{" "}
           <b className="btc num">{fmt(x.payout)} sats</b>
-          . La minería se descuenta siempre de tu pago, a la tasa del momento en que pediste la invoice. Con fees altos, los montos chicos se rechazan: el payout tiene que quedar por encima del dust ({fmt(x.info.min_payout_sat)} sats).
+           estimados. La minería se descuenta siempre de tu pago: la de tu tx real, a esa tasa. Una tx típica pesa unos 131 vB, menos que los 160 de la estimación, así que suele llegarte un poco más; si pesa más, un poco menos. El servicio no gana ni pierde con la minería: se queda solo con la comisión. Con fees altos, los montos chicos se rechazan: el payout tiene que quedar por encima del dust ({fmt(x.info.min_payout_sat)} sats).
         </p>
       </section>
       <section aria-labelledby="h-what">
