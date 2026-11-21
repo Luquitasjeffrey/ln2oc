@@ -65,7 +65,7 @@ Invariantes (ver `app/worker.py`):
 | `app/fees.py` | Estimación de fee y cálculo de payout (enteros, basis points) |
 | `app/halt.py` | `FatalSwapError`, `halt_process` |
 | `app/info.py` | `GET /` → redirect a `FRONTEND_URL`; `GET /api/info` (parámetros de la instancia, commit) |
-| `web/` | Sitio estático React + Vite (multi-página), servido por su propio nginx. Ver `web/` y README |
+| `web/` | Sitio estático React + Vite (multi-página), servido por su propio nginx. Ver `web/CLAUDE.md` y README |
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
 | `app/config.py` | Settings con validación (falla al arrancar si algo está fuera de rango) |
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
@@ -76,7 +76,8 @@ Invariantes (ver `app/worker.py`):
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 PYTHON=.venv/bin/python scripts/gen_protos.sh      # genera app/lnrpc/
 .venv/bin/python -m pytest tests -q -p no:cacheprovider   # ~15 s, necesita Polar corriendo (ver tests/CLAUDE.md)
-docker compose up -d --build                        # servicio "ln2oc", volumen ln2oc_data
+docker compose up -d --build                        # servicios "ln2oc" (API, :8000) y "web" (sitio, :8080)
+cd web && npm ci && npm test && VITE_API_URL=http://127.0.0.1:8000 npm run dev   # sitio en dev (ver web/CLAUDE.md)
 ```
 
 No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio se niegue a arrancar (`verify_schema`).
@@ -85,6 +86,7 @@ No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio s
 
 - Remote `origin` = `git@github-freelance:Luquitasjeffrey/ln2oc.git` (alias SSH `github-freelance` en `~/.ssh/config`).
 - Se trabaja **directo en `main`** (pedido del usuario). `fix/safe-payout-flow` ya está mergeada (fast-forward) en `main`. `master` es la rama local vieja.
+- **Commits firmados con GPG** (`commit.gpgsign=true`, la llave del usuario). `--no-gpg-sign` solo si el usuario lo autoriza para esa sesión, y antes de pushear hay que volver a firmar los commits no pusheados: `git rebase --force-rebase --gpg-sign origin/main` (cambian los hashes; actualizar si están citados en la memoria). Hay commits viejos sin firma ya pusheados: no reescribirlos sin pedido explícito (sería force push).
 
 ## Artifact de documentación
 
@@ -113,4 +115,4 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 12. Seguimiento de confirmaciones (`BROADCASTED` es terminal; una tx trabada no se detecta).
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
 
-Orden propuesto: 4, 5 → 6, 11 → 7, 8, 9. (El 1, polling síncrono, ya está hecho.)
+Orden propuesto: 4, 5 → 6, 11 → 7, 8, 9. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)
