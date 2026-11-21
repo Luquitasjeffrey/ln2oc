@@ -53,6 +53,8 @@ Invariantes (ver `app/worker.py`):
 - Detección de pagos: **polling síncrono desde el hilo worker**, `LookupInvoice` de cada `PENDING` de a una, cada `INVOICE_POLL_INTERVAL_SECONDS` (60 s, decidido por el usuario). Tope `MAX_PENDING_SWAPS`. Sin suscripciones. Implementado.
 - Sitio web: **lo sirve otro servidor** (nginx de `web/`). FastAPI no sirve archivos del front: solo redirige `GET /` (y HEAD) a `FRONTEND_URL`. El front lee `/api/info`.
 - Boltz está caído (desde agosto de 2026); no contarlo como opción de reposición.
+- Errores LNURL: **códigos HTTP normales** (400/503/502/500) con `{"status":"ERROR","reason":...}` en el cuerpo, no HTTP 200 (decisión del usuario, aunque LUD-01 diga que el código no importa).
+- Lightning Address: **solo direcciones bech32** (`bc1q…`, `bc1p…`) para swaps nuevos; las legacy no, porque LUD-16 exige minúsculas (decisión del usuario).
 
 ## Estructura
 
