@@ -12,9 +12,10 @@ export type InstanceInfo = {
   min_swap_sat: number;
   max_swap_sat: number;
   min_payout_sat: number;
-  estimated_tx_vbytes: number;
+  /** Current rate; the miner fee itself is set when each payout is signed. */
   fee_rate_sat_vb: number | null;
-  miner_fee_sat: number | null;
+  /** Size of the last payout this instance signed, if any. */
+  last_payout_vbytes: number | null;
   invoice_poll_interval_seconds: number;
   halted: boolean;
 };
@@ -30,9 +31,8 @@ export const DEFAULT_INFO: InstanceInfo = {
   min_swap_sat: 1_000,
   max_swap_sat: 1_000_000,
   min_payout_sat: 546,
-  estimated_tx_vbytes: 160,
   fee_rate_sat_vb: null,
-  miner_fee_sat: null,
+  last_payout_vbytes: null,
   invoice_poll_interval_seconds: 60,
   halted: false,
 };

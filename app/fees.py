@@ -1,12 +1,6 @@
 import math
 from app.config import settings
 
-# Payout tx budget charged to the user: ~1-2 inputs + recipient + change.
-# If LND's actual coin selection costs more than what we charged, the swap is
-# canceled (refunded) instead of the operator absorbing the difference.
-ESTIMATED_TX_VBYTES = 160
-
-
 class FeeEstimateError(Exception):
     pass
 
@@ -30,14 +24,12 @@ def current_fee_rate_sat_per_vbyte(lnd) -> int:
     return rate
 
 
-def calculate_miner_fee(sat_per_vbyte: int) -> int:
-    return ESTIMATED_TX_VBYTES * sat_per_vbyte
-
-
-def calculate_payout(amount_sat: int, miner_fee_sat: int, fee_rate: float | None = None) -> int:
-    """payout = floor(amount_sat * (1 - fee_rate)) - miner_fee_sat, in exact integer math
-    (fee_rate expressed in basis points)."""
+def calculate_gross(amount_sat: int, fee_rate: float | None = None) -> int:
+    """What the user gets before mining: floor(amount_sat * (1 - fee_rate)), exact integer
+    math (fee_rate in basis points). The operator keeps exactly amount_sat - gross.
+    The miner fee is not known here: it is set when the payout is signed, from the real
+    tx at the rate of that moment, and the user receives gross - miner fee."""
     if fee_rate is None:
         fee_rate = settings.SWAP_FEE_RATE
     keep_bps = 10_000 - int(round(fee_rate * 10_000))
-    return (amount_sat * keep_bps) // 10_000 - miner_fee_sat
+    return (amount_sat * keep_bps) // 10_000

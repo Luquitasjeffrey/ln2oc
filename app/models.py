@@ -53,9 +53,10 @@ class Swap(Base):
     preimage = Column(String(64), nullable=False)  # Secret to settle hold invoice
     btc_address = Column(String(128), nullable=False)
     amount_sat = Column(BigInteger, nullable=False)
-    payout_sat = Column(BigInteger, nullable=False)  # quoted until SIGNED; then what the tx pays
-    miner_fee_sat = Column(BigInteger, nullable=False)  # quoted estimate (160 vB); the user pays the real fee
-    fee_rate_sat_vb = Column(Integer, nullable=False)  # fee rate the user was charged; the payout uses it
+    gross_sat = Column(BigInteger, nullable=False)  # amount - service fee: payout + miner fee come out of it
+    max_miner_fee_sat = Column(BigInteger, nullable=True)  # set before settling: cap on the payout's miner fee
+    payout_sat = Column(BigInteger, nullable=True)  # set when signing: gross_sat - actual_fee_sat
+    fee_rate_sat_vb = Column(Integer, nullable=True)  # rate estimated when signing the payout
     invoice = Column(Text, nullable=False)
     lock_id = Column(String(64), nullable=False)  # hex, LND UTXO lease id for this swap
 

@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.fees import FeeEstimateError, calculate_miner_fee, calculate_payout, current_fee_rate_sat_per_vbyte
+from app.fees import calculate_gross
 from app.halt import is_halted
 from app.lnd import LndError, LndUnavailable, lnd_client
 from app.models import Swap, SwapStatus
@@ -61,20 +61,12 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     if amount_sat > settings.MAX_SWAP_SAT:
         raise SwapError(f"Amount {amount_sat} sat exceeds maximum {settings.MAX_SWAP_SAT} sat.")
 
-    try:
-        sat_per_vbyte = current_fee_rate_sat_per_vbyte(lnd_client)
-    except (FeeEstimateError, LndUnavailable, LndError) as e:
-        logger.error("Fee estimation unavailable, refusing swap: %s", e)
-        raise SwapError("On-chain fee estimation unavailable, try again later.", status_code=503)
-
-    miner_fee_sat = calculate_miner_fee(sat_per_vbyte)
-    payout_sat = calculate_payout(amount_sat, miner_fee_sat, settings.SWAP_FEE_RATE)
-    if payout_sat < settings.MIN_PAYOUT_SAT:
-        raise SwapError(
-            f"Calculated payout of {payout_sat} sats is below dust limit ({settings.MIN_PAYOUT_SAT} sats). "
-            f"(Amount: {amount_sat} sats, miner fee: {miner_fee_sat} sats, fee rate: {settings.SWAP_FEE_RATE * 100}%)"
-        )
-    required_sat = payout_sat + miner_fee_sat
+    # No miner fee here: it is set when the payout is signed (real tx, rate of that moment).
+    gross_sat = calculate_gross(amount_sat, settings.SWAP_FEE_RATE)
+    if gross_sat < settings.MIN_PAYOUT_SAT:
+        raise SwapError(f"Amount {amount_sat} sat leaves {gross_sat} sat after the service fee, below dust "
+                        f"({settings.MIN_PAYOUT_SAT} sat).")
+    required_sat = gross_sat
 
     preimage_bytes = os.urandom(32)
     payment_hash_bytes = hashlib.sha256(preimage_bytes).digest()
@@ -92,8 +84,7 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
             status_code=400,
         )
 
-    # payout_sat is an estimate: the real miner fee (at sat_per_vbyte) is deducted at payout.
-    memo = f"Swap-out to {btc_address[:10]}...: ~{payout_sat} sats (miner fee at {sat_per_vbyte} sat/vB deducted)"
+    memo = f"Swap-out to {btc_address[:10]}...: {gross_sat} sats minus the on-chain miner fee at payout"
     try:
         inv = lnd_client.add_hold_invoice(
             payment_hash=payment_hash_bytes,
@@ -117,9 +108,7 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         preimage=preimage_bytes.hex(),
         btc_address=btc_address,
         amount_sat=amount_sat,
-        payout_sat=payout_sat,
-        miner_fee_sat=miner_fee_sat,
-        fee_rate_sat_vb=sat_per_vbyte,
+        gross_sat=gross_sat,
         invoice=invoice_str,
         lock_id=lock_id.hex(),
         status=SwapStatus.PENDING,
@@ -128,6 +117,6 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     db.commit()
     db.refresh(swap)
 
-    logger.info("Created swap %s for address %s, amount %d sat, payout %d sat, max miner fee %d sat",
-                swap.id, btc_address, amount_sat, payout_sat, miner_fee_sat)
+    logger.info("Created swap %s for address %s, amount %d sat, %d sat minus miner fee",
+                swap.id, btc_address, amount_sat, gross_sat)
     return swap

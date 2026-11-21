@@ -158,10 +158,10 @@ export default function Arquitectura() {
                 Lightning
               </text>
               <text x="822" y="372" className="m mut">
-                GetInfo · WalletBalance
+                GetInfo · WalletBalance · EstimateFee
               </text>
               <text x="822" y="389" className="m mut">
-                (red, altura, sync, saldo)
+                (red, altura, sync, saldo, simulación)
               </text>
               <path d="M430 230 L450 230 L450 90 L770 90 L770 110 L800 110" className="e" markerEnd="url(#a)" />
               <text x="610" y="84" textAnchor="middle" className="m mut">
@@ -346,7 +346,7 @@ export default function Arquitectura() {
             <code>
               ACCEPTED
             </code>
-            {" "}y lo único que se hace es mirar el saldo: si no alcanza, se cancela y el pagador no pierde nada. A la derecha, la invoice ya está{" "}
+            {" "}y lo único que se hace es mirar el saldo, con una simulación de la tx en LND que no reserva nada: si no alcanza, o si la minería dejaría el payout en dust, se cancela y el pagador no pierde nada. A la derecha, la invoice ya está{" "}
             <code>
               SETTLED
             </code>
@@ -372,7 +372,7 @@ export default function Arquitectura() {
               <code>
                 ACCEPTED
               </code>
-              {" "}lo único que se hace es chequear el saldo.
+              {" "}lo único que se hace es chequear el saldo y que la minería, aun en su tope (2× la estimada), no deje el payout en dust. Al firmar se paga la tasa del momento, hasta ese tope.
             </span>
           </li>
           <li>
@@ -435,7 +435,7 @@ export default function Arquitectura() {
                   app/swaps.py
                 </td>
                 <td>
-                  Crea el swap: estima fees (si no hay estimación, rechaza), calcula el payout, emite la hold invoice y guarda el swap{" "}
+                  Crea el swap: calcula monto − comisión (sin minería: se fija al firmar), emite la hold invoice y guarda el swap{" "}
                   <code>
                     PENDING
                   </code>
@@ -487,7 +487,7 @@ export default function Arquitectura() {
                   app/fees.py
                 </td>
                 <td>
-                  Estimación de fee (sat/kw → sat/vB, redondeando para arriba) y cálculo del payout con aritmética entera.
+                  Tasa de minería (sat/kw → sat/vB, redondeando para arriba) y monto − comisión con aritmética entera. La minería de cada payout sale de la tx real al firmar.
                 </td>
               </tr>
               <tr>

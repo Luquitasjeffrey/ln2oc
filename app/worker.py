@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import SessionLocal
+from app.fees import FeeEstimateError, current_fee_rate_sat_per_vbyte
 from app.halt import FatalSwapError, halt_process
 from app.lnd import HtlcState, InvoiceState, LndClient, LndError, LndUnavailable, lnd_client
 from app.models import Swap, SwapStatus
@@ -315,6 +316,42 @@ class SwapWorker:
                 self.lnd.release_output(lock_id, lease.outpoint)
                 logger.info("Swap %s: released lease on %s:%d", swap.id, lease.outpoint.txid_str, lease.outpoint.output_index)
 
+    def _payout_viability(self, swap: Swap) -> tuple[Optional[str], int]:
+        """Last check before settling, while the payer can still be refunded. LND dry-runs
+        the real tx (coin selection over the current wallet, nothing leased), priced at the
+        current rate. The payout will pay the rate of the moment it is signed, capped at
+        MINER_FEE_CAP_MULTIPLIER x this estimate; we only settle if the payout is above dust
+        and the wallet covers it even at that cap. Returns (why not, cap)."""
+        try:
+            rate = current_fee_rate_sat_per_vbyte(self.lnd)
+        except FeeEstimateError as e:
+            return f"no usable fee estimate: {e}", 0
+        try:
+            vbytes = self._payout_vbytes(swap)
+            spendable = self._spendable_sat()
+        except LndError as e:
+            return f"cannot build the payout now: {e.message}", 0
+        if vbytes is None:
+            return "LND returned an unusable tx fee estimate", 0
+        miner = vbytes * rate
+        cap = int(miner * settings.MINER_FEE_CAP_MULTIPLIER)
+        if swap.gross_sat - cap < settings.MIN_PAYOUT_SAT:
+            return (f"payout could be {swap.gross_sat - cap} sat with the miner fee at its cap of {cap} sat "
+                    f"({settings.MINER_FEE_CAP_MULTIPLIER:g} x ~{miner} sat at {rate} sat/vB), "
+                    f"below dust ({settings.MIN_PAYOUT_SAT} sat)"), 0
+        if spendable < swap.gross_sat + cap:
+            return (f"insufficient on-chain balance: {spendable} sat spendable, "
+                    f"{swap.gross_sat + cap} sat required"), 0
+        return None, cap
+
+    def _payout_vbytes(self, swap: Swap) -> Optional[int]:
+        """Approximate size of the payout tx as LND would build it now (dry run, no leases)."""
+        est = self.lnd.estimate_tx_fee(swap.btc_address, swap.gross_sat,
+                                       settings.FEE_TARGET_CONF, settings.ONCHAIN_MIN_CONFS)
+        if est.fee_sat <= 0 or est.sat_per_vbyte <= 0:
+            return None
+        return -(-est.fee_sat // est.sat_per_vbyte)  # rounded up
+
     # ------------------------------------------------------------------ PENDING
 
     def _process_pending(self, db: Session, swap: Swap, payout_busy: bool) -> Optional[str]:
@@ -363,15 +400,15 @@ class SwapWorker:
             self._to_canceling(db, swap, f"HTLC CLTV margin {margin} < {settings.MIN_CLTV_MARGIN_BLOCKS} blocks")
             return
 
-        required = swap.payout_sat + swap.miner_fee_sat
-        try:
-            spendable = self._spendable_sat()
-        except LndError as e:
-            self._to_canceling(db, swap, f"cannot read on-chain balance: {e.message}")
+        problem, cap = self._payout_viability(swap)
+        if problem:
+            self._to_canceling(db, swap, problem)
             return
-        if spendable < required:
-            self._to_canceling(db, swap, f"insufficient on-chain balance: {spendable} sat spendable, {required} sat required")
-            return
+        # Persist the cap before settling: after the settle it is what bounds the user's miner fee.
+        db.execute(update(Swap).where(Swap.id == swap.id, Swap.status == SwapStatus.SETTLING)
+                   .values(max_miner_fee_sat=cap))
+        db.commit()
+        db.refresh(swap)
 
         try:
             self.lnd.settle_invoice(bytes.fromhex(swap.preimage))
@@ -402,19 +439,36 @@ class SwapWorker:
         self._release_leases(swap)
 
         lock_id = bytes.fromhex(swap.lock_id)
-        owed = f"USER IS OWED {swap.payout_sat} sat to {swap.btc_address}"
+        owed = f"USER IS OWED {swap.gross_sat} sat minus miner fee to {swap.btc_address}"
+        cap = swap.max_miner_fee_sat
+        if not cap or cap <= 0:
+            raise FatalSwapError(swap.id, f"PAID without a miner fee cap ({owed})")
+        # The rate is the one of this moment; the fee never exceeds the cap set before settling.
         try:
-            funded = self.lnd.fund_psbt(
-                addr=swap.btc_address,
-                amount_sat=swap.payout_sat,
-                sat_per_vbyte=swap.fee_rate_sat_vb,  # the rate the user was charged for
-                lock_id=lock_id,
-                lock_expiration_seconds=settings.UTXO_LEASE_SECONDS,
-                min_confs=settings.ONCHAIN_MIN_CONFS,
-            )
-        except LndError as e:
-            raise FatalSwapError(swap.id, f"cannot fund payout after settle ({owed}): {e.message}")
-        psbt, payout = self._charge_actual_fee(swap, funded, owed)
+            rate = current_fee_rate_sat_per_vbyte(self.lnd)
+        except FeeEstimateError as e:
+            rate = None
+            logger.warning("Swap %s: no usable fee estimate at payout (%s); paying the cap", swap.id, e)
+        try:
+            vbytes = self._payout_vbytes(swap)
+        except LndError:
+            vbytes = None
+        if vbytes:
+            cap_rate = max(settings.MIN_SAT_PER_VBYTE, cap // vbytes)
+            rate = cap_rate if rate is None else min(rate, cap_rate)
+        elif rate is None:
+            raise FatalSwapError(swap.id, f"no fee rate and no tx size to pay the payout with ({owed})")
+
+        funded = self._fund(swap, swap.gross_sat, rate, lock_id, owed)
+        psbt, payout = self._deduct_fee(swap, funded, cap, owed)
+        exact = psbt is not None
+        if not exact:
+            # No change output to take the fee from: fund the net amount instead. The new
+            # tx can weigh slightly differently; that difference is the operator's (logged).
+            self._release_leases(swap)
+            funded = self._fund(swap, payout, rate, lock_id, owed)
+            psbt = funded.funded_psbt
+            payout = self._check_net_funding(swap, funded, payout, cap, owed)
         try:
             final = self.lnd.finalize_psbt(psbt)
         except LndError as e:
@@ -422,57 +476,78 @@ class SwapWorker:
 
         raw = bytes(final.raw_final_tx)
         txid, fee = self._verify_payout_tx(swap, raw, funded, lock_id, payout)
-        gross = swap.payout_sat + swap.miner_fee_sat
-        if payout != swap.payout_sat and payout + fee != gross:
-            raise FatalSwapError(swap.id, f"adjusted payout {payout} + fee {fee} != {gross} ({owed})")
+        if exact and payout + fee != swap.gross_sat:
+            raise FatalSwapError(swap.id, f"payout {payout} + fee {fee} != {swap.gross_sat} ({owed})")
+        vsize = parse_tx(raw).vsize
+        if fee < vsize * settings.MIN_SAT_PER_VBYTE:
+            raise FatalSwapError(swap.id, f"payout tx fee {fee} sat is below {settings.MIN_SAT_PER_VBYTE} sat/vB "
+                                          f"for {vsize} vB ({owed})")
 
-        # payout_sat becomes what is actually paid; the quote is payout_sat + miner_fee_sat - actual_fee_sat.
-        self._transition(db, swap, SwapStatus.PAID, SwapStatus.SIGNED,
-                         raw_tx=raw.hex(), txid=txid, actual_fee_sat=fee, payout_sat=payout)
+        if fee < vsize * rate:  # capped: record the rate the tx actually pays
+            rate = fee // vsize
+        self._transition(db, swap, SwapStatus.PAID, SwapStatus.SIGNED, raw_tx=raw.hex(), txid=txid,
+                         payout_sat=payout, actual_fee_sat=fee, fee_rate_sat_vb=rate)
         logger.info("Swap %s: payout tx %s signed and stored (%d sat to user, fee %d sat at %d sat/vB), "
-                    "not broadcast yet", swap.id, txid, payout, fee, swap.fee_rate_sat_vb)
+                    "not broadcast yet", swap.id, txid, payout, fee, rate)
 
-    def _charge_actual_fee(self, swap: Swap, funded, owed: str) -> tuple[bytes, int]:
-        """The user pays the real miner fee, not the 160 vB estimate: the destination gets
-        (payout + miner_fee_sat) - real fee, and the difference moves to/from our change.
-        Only amounts change, so the tx size and its fee stay the same. The operator keeps
-        exactly the service fee. If there is no change to move it against (or it would be
-        dust), the quoted payout is kept and the difference is logged."""
+    def _fund(self, swap: Swap, amount_sat: int, rate: int, lock_id: bytes, owed: str):
+        try:
+            return self.lnd.fund_psbt(
+                addr=swap.btc_address,
+                amount_sat=amount_sat,
+                sat_per_vbyte=rate,
+                lock_id=lock_id,
+                lock_expiration_seconds=settings.UTXO_LEASE_SECONDS,
+                min_confs=settings.ONCHAIN_MIN_CONFS,
+            )
+        except LndError as e:
+            raise FatalSwapError(swap.id, f"cannot fund payout after settle ({owed}): {e.message}")
+
+    def _check_net_funding(self, swap: Swap, funded, payout: int, cap: int, owed: str) -> int:
+        """No-change fallback: the tx was funded paying `payout` directly. Its fee may differ
+        a little from the one we charged; the operator takes that difference (logged)."""
+        try:
+            tx = psbt_unsigned_tx(funded.funded_psbt)
+        except ValueError as e:
+            raise FatalSwapError(swap.id, f"cannot read funded PSBT ({owed}): {e}")
+        fee = sum(u.value for u in funded.locked_utxos) - sum(o.value for o in tx.outputs)
+        logger.warning("Swap %s: no change output; user gets %d sat, tx fee %d sat (charged %d, cap %d)",
+                       swap.id, payout, fee, swap.gross_sat - payout, cap)
+        return payout
+
+    def _deduct_fee(self, swap: Swap, funded, cap: int, owed: str) -> tuple[Optional[bytes], int]:
+        """The tx was funded paying gross_sat to the user, so the miner fee came out of our
+        change. Charge it to the user instead, never above the cap: destination = gross -
+        fee, change gets the rest (Σinputs - gross). Only amounts change, so the tx size
+        stays the same; the operator keeps exactly the service fee.
+        Returns (None, gross - fee) if there is no change output to rebalance against."""
         try:
             tx = psbt_unsigned_tx(funded.funded_psbt)
         except ValueError as e:
             raise FatalSwapError(swap.id, f"cannot read funded PSBT ({owed}): {e}")
         dest_script = address_to_script(swap.btc_address, settings.BITCOIN_NETWORK)
         dest = [i for i, o in enumerate(tx.outputs) if o.script == dest_script]
-        if len(dest) != 1 or tx.outputs[dest[0]].value != swap.payout_sat:
-            raise FatalSwapError(swap.id, f"funded PSBT does not pay {swap.payout_sat} sat once to destination ({owed})")
+        if len(dest) != 1 or tx.outputs[dest[0]].value != swap.gross_sat:
+            raise FatalSwapError(swap.id, f"funded PSBT does not pay {swap.gross_sat} sat once to destination ({owed})")
         d = dest[0]
-        fee = sum(u.value for u in funded.locked_utxos) - sum(o.value for o in tx.outputs)
-        delta = swap.miner_fee_sat - fee  # > 0: user overpaid the estimate; < 0: tx is heavier
-        if delta == 0:
-            return funded.funded_psbt, swap.payout_sat
-
+        funded_fee = sum(u.value for u in funded.locked_utxos) - sum(o.value for o in tx.outputs)
+        if funded_fee <= 0:
+            raise FatalSwapError(swap.id, f"funded PSBT has non-positive fee {funded_fee} ({owed})")
+        fee = min(funded_fee, cap)
+        if fee < funded_fee:
+            logger.warning("Swap %s: miner fee %d sat capped at %d sat", swap.id, funded_fee, cap)
+        payout = swap.gross_sat - fee
+        if payout < settings.MIN_PAYOUT_SAT:  # cannot happen: checked against the cap before settling
+            raise FatalSwapError(swap.id, f"miner fee {fee} sat leaves a {payout} sat payout, below dust ({owed})")
         c = funded.change_output_index
-        new_payout = swap.payout_sat + delta
         if c < 0 or c == d or c >= len(tx.outputs):
-            reason = "no change output"
-        elif tx.outputs[c].value - delta < settings.MIN_PAYOUT_SAT:
-            reason = "change would be dust"
-        elif new_payout < settings.MIN_PAYOUT_SAT:
-            reason = "payout would be dust"
-        else:
-            try:
-                psbt = psbt_set_output_values(funded.funded_psbt,
-                                              {d: new_payout, c: tx.outputs[c].value - delta})
-            except ValueError as e:
-                raise FatalSwapError(swap.id, f"cannot adjust funded PSBT ({owed}): {e}")
-            logger.info("Swap %s: real miner fee %d sat vs %d budgeted; payout %d -> %d sat",
-                        swap.id, fee, swap.miner_fee_sat, swap.payout_sat, new_payout)
-            return psbt, new_payout
-        logger.warning("Swap %s: real miner fee %d sat vs %d budgeted, %s: paying the quoted %d sat; "
-                       "operator %s %d sat", swap.id, fee, swap.miner_fee_sat, reason, swap.payout_sat,
-                       "keeps" if delta > 0 else "absorbs", abs(delta))
-        return funded.funded_psbt, swap.payout_sat
+            return None, payout
+        try:
+            psbt = psbt_set_output_values(funded.funded_psbt,
+                                          {d: payout, c: tx.outputs[c].value + funded_fee})  # change = Σin - gross
+        except ValueError as e:
+            raise FatalSwapError(swap.id, f"cannot adjust funded PSBT ({owed}): {e}")
+        return psbt, payout
 
     def _verify_payout_tx(self, swap: Swap, raw: bytes, funded, lock_id: bytes, payout: int) -> tuple[str, int]:
         """Independent check of what LND signed. Any surprise is fatal."""

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { payoutSat, pct, serviceFeeSat } from "./fees";
 
-describe("fees (mirrors app/fees.py calculate_payout)", () => {
+describe("fees (mirrors app/fees.py calculate_gross)", () => {
   it("matches the documented 100.000 sats example", () => {
     expect(serviceFeeSat(100_000, 70)).toBe(700);
-    expect(payoutSat(100_000, 70, 160)).toBe(99_140);
+    expect(payoutSat(100_000, 70, 131)).toBe(99_169);
   });
 
   it("floors like the integer math in the service", () => {

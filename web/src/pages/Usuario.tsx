@@ -176,15 +176,15 @@ export default function Usuario() {
           Cuánto te llega
         </h2>
         <p>
-          Dos descuentos y nada más: la comisión fija del servicio y la minería real de tu transacción, a la tasa que estima el nodo al momento de pedir la invoice.
+          Dos descuentos y nada más: la comisión fija del servicio y la minería de tu transacción. La minería se calcula recién cuando se firma tu tx: su tamaño real por la tasa de ese momento.
         </p>
         <div className="formula">
-          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − minería real (≈ {x.vbytes} vB × sat/vB)
+          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − vB de tu tx × sat/vB al firmar
         </div>
         <p>
-          Con {fmt(x.amount)} sats y {x.live ? "la minería de ahora" : "una minería de"} {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ≈{" "}
+          Por ejemplo, con {fmt(x.amount)} sats, una tx de {x.vbytes} vB{x.measured ? " (lo que pesó el último payout)" : ""} y {x.live ? "la tasa de ahora" : "una tasa de"}, {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ≈{" "}
           <b className="btc num">{fmt(x.payout)} sats</b>
-           estimados. La minería se descuenta siempre de tu pago: la de tu tx real, a esa tasa. Una tx típica pesa unos 131 vB, menos que los 160 de la estimación, así que suele llegarte un poco más; si pesa más, un poco menos. El servicio no gana ni pierde con la minería: se queda solo con la comisión. Con fees altos, los montos chicos se rechazan: el payout tiene que quedar por encima del dust ({fmt(x.info.min_payout_sat)} sats).
+          . El número exacto se sabe al firmar: la tasa de ese momento, pero nunca más del doble de la minería estimada cuando llega tu pago. La minería se descuenta siempre de tu pago: el servicio no gana ni pierde con ella, se queda solo con la comisión. Si al llegar tu pago, aun con ese tope, la minería pudiera dejar tu payout por debajo del dust ({fmt(x.info.min_payout_sat)} sats), se cancela la invoice y tus sats no salen de tu wallet.
         </p>
       </section>
       <section aria-labelledby="h-what">
