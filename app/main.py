@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy import select
 
-from app.config import settings
+from app.config import APP_VERSION, settings
 from app.db import SessionLocal, init_db, verify_schema
 from app.lnd import lnd_client
+from app.info import router as info_router
 from app.lnurl import router as lnurl_router
 from app.models import Swap, SwapStatus
 from app.worker import swap_worker
@@ -56,11 +57,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ln2oc - Lightning to On-Chain Swap Service",
     description="Minimal Lightning Address to Bitcoin on-chain swap-out service.",
-    version="0.2.0",
+    version=APP_VERSION,
     lifespan=lifespan,
 )
 
 app.include_router(lnurl_router)
+app.include_router(info_router)
 
 
 @app.get("/healthz")

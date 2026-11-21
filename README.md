@@ -98,6 +98,8 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `DOMAIN` | Dominio para metadatos de Lightning Address | `127.0.0.1:8000` |
 | `EXTERNAL_URL` | URL pública o base del servicio | `http://127.0.0.1:8000` |
 | `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./ln2oc.db` |
+| `FRONTEND_URL` | Sitio web (lo sirve otro servidor); `GET /` redirige acá. Sin valor, `/` da 404 | — |
+| `GIT_COMMIT` | Commit que informa `/api/info` (se pasa en el build de Docker); sin valor usa `git rev-parse HEAD` | — |
 | `LOG_LEVEL` | Nivel de logs (`INFO`, `DEBUG`, `WARNING`) | `INFO` |
 
 ---

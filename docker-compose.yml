@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
       args:
         APP_UID: ${APP_UID:-1000}
+        # GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build
+        GIT_COMMIT: ${GIT_COMMIT:-}
     container_name: ln2oc
     restart: unless-stopped
     ports:
@@ -23,6 +25,8 @@ services:
       - MIN_SAT_PER_VBYTE=${MIN_SAT_PER_VBYTE:-1}
       - DOMAIN=${DOMAIN:-127.0.0.1:8000}
       - EXTERNAL_URL=${EXTERNAL_URL:-http://127.0.0.1:8000}
+      # The website is another server (service "web"); GET / only redirects there.
+      - FRONTEND_URL=${FRONTEND_URL:-http://127.0.0.1:8080}
       - DATABASE_URL=sqlite:////data/ln2oc.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
