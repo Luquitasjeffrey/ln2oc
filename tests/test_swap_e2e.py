@@ -18,7 +18,7 @@ from app.validator import address_to_script
 from app.worker import SwapWorker
 from tests.conftest import (
     get_bitcoind_tx, get_swap, insert_swap, leases_for, mine_blocks, new_dest_address,
-    received_by, tick_until,
+    received_by, tick_until, wait_for_status,
 )
 
 REGTEST_ADDR = "bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz"
@@ -153,6 +153,94 @@ async def test_complete_e2e_swap(env, client, payer):
     assert_paid_exactly_once(swap, dest)
     mine_blocks(1)
     assert received_by(dest, minconf=1) == swap.payout_sat
+
+
+# --------------------------------------------------------------------- event-driven worker
+
+
+def _event_driven_worker(env):
+    """A real worker thread: it only learns about payments through SubscribeSingleInvoice."""
+    w = SwapWorker(session_factory=env["Session"], retry_interval_seconds=0.2,
+                   lock_path=str(env["tmp_path"] / "event.lock"), on_fatal=env["fatal"])
+    env["worker"] = w
+    return w
+
+
+def test_subscription_picks_up_swaps_pending_at_startup(env, payer):
+    dest = new_dest_address()
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                   miner_fee_sat=current_miner_fee(), address=dest)
+    worker = _event_driven_worker(env)
+    worker.start()  # subscribes every PENDING swap before the worker loop starts
+    assert worker.watcher.is_watching(swap_id)
+
+    payment = payer.pay(invoice)
+    swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    assert payment.result(timeout=60).payment_error == ""
+    assert_paid_exactly_once(swap, dest)
+    worker.stop()
+    assert worker.watcher.watched_count() == 0
+    mine_blocks(1)
+
+
+def test_subscription_picks_up_new_swaps_and_expiry(env, payer):
+    worker = _event_driven_worker(env)
+    worker.start()
+
+    # A new swap registered by the API path is processed as soon as it is paid.
+    dest = new_dest_address()
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                   miner_fee_sat=current_miner_fee(), address=dest)
+    worker.notify_new_swap(swap_id, bytes.fromhex(get_swap(env["Session"], swap_id).payment_hash))
+    payment = payer.pay(invoice)
+    swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    assert payment.result(timeout=60).payment_error == ""
+    assert_paid_exactly_once(swap, dest)
+
+    # An invoice canceled/expired in LND is noticed through the stream too.
+    other_id, _ = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                              miner_fee_sat=current_miner_fee(), address=new_dest_address())
+    other = get_swap(env["Session"], other_id)
+    worker.notify_new_swap(other_id, bytes.fromhex(other.payment_hash))
+    lnd_client.cancel_invoice(bytes.fromhex(other.payment_hash))
+    other = wait_for_status(env["Session"], other_id, {SwapStatus.EXPIRED})
+    assert other.status == SwapStatus.EXPIRED
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    worker.stop()
+    mine_blocks(1)
+
+
+def test_concurrent_payments_are_paid_one_after_another(env, payer):
+    worker = _event_driven_worker(env)
+    worker.start()
+    swaps = []
+    for _ in range(3):
+        dest = new_dest_address()
+        swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                       miner_fee_sat=current_miner_fee(), address=dest)
+        worker.notify_new_swap(swap_id, bytes.fromhex(get_swap(env["Session"], swap_id).payment_hash))
+        swaps.append((swap_id, dest, invoice))
+    payments = [payer.pay(invoice) for _, _, invoice in swaps]  # all held at roughly the same time
+    for (swap_id, dest, _), payment in zip(swaps, payments):
+        swap = wait_for_status(env["Session"], swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+        assert payment.result(timeout=60).payment_error == "", swap.error
+        assert_paid_exactly_once(swap, dest)
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    worker.stop()
+    mine_blocks(1)
+
+
+def test_startup_refuses_more_pending_swaps_than_it_can_watch(env):
+    for _ in range(2):
+        insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                    miner_fee_sat=current_miner_fee(), address=new_dest_address())
+    w = SwapWorker(session_factory=env["Session"], lock_path=str(env["tmp_path"] / "cap.lock"),
+                   on_fatal=env["fatal"], max_watched_invoices=1)
+    with pytest.raises(RuntimeError, match="MAX_WATCHED_INVOICES"):
+        w.start()
+    w.watcher.close()
+    w.release_process_lock()
 
 
 # --------------------------------------------------------------------- refunds
@@ -290,6 +378,7 @@ def test_invoice_settled_outside_flow_is_fatal(env, payer):
     lnd_client.settle_invoice(bytes.fromhex(swap.preimage))  # someone settles behind our back
     payment.result(timeout=60)
 
+    env["worker"].notify(swap_id)
     env["worker"].run_tick_guarded()
     assert env["fatal"].reasons and "SETTLED while swap PENDING" in env["fatal"].reasons[0]
     swap = get_swap(env["Session"], swap_id)
