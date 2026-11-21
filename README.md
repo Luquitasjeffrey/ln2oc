@@ -155,6 +155,24 @@ docker compose down
 
 ---
 
+## 🌐 Sitio web (`web/`)
+
+Sitio estático en React + Vite (multi-página: `/`, `/usuario/`, `/operadores/`, `/flujo/`, `/arquitectura/`), con el contenido y el estilo del artifact de documentación. **Lo sirve su propio servidor** (servicio `web` de Docker Compose: nginx en el puerto `8080`). El servicio de swaps no sirve archivos del sitio: solo redirige `GET /` a `FRONTEND_URL`.
+
+El sitio lee los valores reales de la instancia de `GET /api/info` (red, dominio, comisión, límites, minería del momento, versión y commit). Si la API no responde, muestra los valores por defecto.
+
+```bash
+cd web
+npm ci
+VITE_API_URL=http://127.0.0.1:8000 npm run dev   # http://127.0.0.1:5173
+npm test                                         # validador de direcciones y cuenta de fees
+npm run build                                    # genera web/dist
+```
+
+Con Docker: `PUBLIC_API_URL=https://ln2oc.com docker compose up -d --build web` (la URL de la API queda fija en el build). Para que `/api/info` informe el commit dentro del contenedor: `GIT_COMMIT=$(git rev-parse --short HEAD) docker compose build ln2oc`.
+
+---
+
 ## 🧪 Cómo Probarlo
 
 ### 1. Ejecutar la Suite Completa de Tests (E2E Regtest)

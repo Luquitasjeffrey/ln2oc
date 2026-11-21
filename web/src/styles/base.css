@@ -1,0 +1,191 @@
+/* ln2oc docs — shared tokens.
+   Layout: one reading column (~68ch) with wide figures that may break out to 1080px.
+   Two money colors carry meaning everywhere: --ln (sats moving over Lightning)
+   and --btc (sats on-chain). Everything else stays neutral. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --sunken: #eceef2;
+  --ink: #15171b;
+  --muted: #5a616e;
+  --line: #d8dbe1;
+  --btc: #c96f05;        /* on-chain, darkened for contrast on light */
+  --btc-soft: #f7931a22;
+  --ln: #5b3fd9;         /* lightning */
+  --ln-soft: #6b4ee61f;
+  --ok: #1d7f52;
+  --warn: #9a6512;
+  --bad: #b8322f;
+  --display: "Space Grotesk", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --step--1: 0.875rem;
+  --step-0: 1.0625rem;
+  --step-1: 1.3rem;
+  --step-2: 1.7rem;
+  --step-3: 2.3rem;
+  --step-4: clamp(2.4rem, 5.5vw, 3.6rem);
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1013;
+    --surface: #161a1f;
+    --sunken: #1c2027;
+    --ink: #e7e9ed;
+    --muted: #9aa1ad;
+    --line: #2b3038;
+    --btc: #f7931a;
+    --btc-soft: #f7931a26;
+    --ln: #a08bff;
+    --ln-soft: #a08bff24;
+    --ok: #45c487;
+    --warn: #e3ac4e;
+    --bad: #f0706b;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1013;
+  --surface: #161a1f;
+  --sunken: #1c2027;
+  --ink: #e7e9ed;
+  --muted: #9aa1ad;
+  --line: #2b3038;
+  --btc: #f7931a;
+  --btc-soft: #f7931a26;
+  --ln: #a08bff;
+  --ln-soft: #a08bff24;
+  --ok: #45c487;
+  --warn: #e3ac4e;
+  --bad: #f0706b;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.6 var(--body);
+  padding-block: 0 4rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+img, svg { max-width: 100%; }
+[hidden] { display: none !important; }
+a { color: var(--ln); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, input:focus-visible {
+  outline: 2px solid var(--ln);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.page { max-width: 1080px; margin: 0 auto; }
+.read { max-width: 68ch; }
+
+/* top nav shared by every page */
+.topnav {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1.25rem;
+  padding-block: 1.1rem; border-bottom: 1px solid var(--line);
+  font: 500 var(--step--1)/1.3 var(--body);
+}
+.topnav .brand {
+  font: 700 1.05rem/1 var(--display); color: var(--ink); text-decoration: none;
+  letter-spacing: -0.01em; margin-right: auto;
+}
+.topnav .brand b { color: var(--btc); font-weight: 700; }
+.topnav a { color: var(--muted); text-decoration: none; }
+.topnav a:hover { color: var(--ink); }
+.topnav a[aria-current="page"] { color: var(--ink); text-decoration: underline; text-decoration-color: var(--btc); text-decoration-thickness: 2px; }
+
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; letter-spacing: -0.015em; margin: 0; }
+h1 { font-size: var(--step-4); font-weight: 700; }
+h2 { font-size: var(--step-2); font-weight: 600; margin-top: 3rem; }
+h3 { font-size: var(--step-1); font-weight: 600; margin-top: 1.75rem; }
+p { margin: 0.75rem 0 0; }
+.lede { font-size: var(--step-1); line-height: 1.45; color: var(--muted); margin-top: 1rem; }
+.eyebrow {
+  font: 600 0.75rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
+}
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+code { background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; }
+.ln { color: var(--ln); }
+.btc { color: var(--btc); }
+.ok { color: var(--ok); }
+.num { font-variant-numeric: tabular-nums; }
+
+/* numbered procedures: the order is the information */
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 1.5rem 0 0; display: grid; gap: 1.25rem; }
+ol.steps > li { counter-increment: s; display: grid; grid-template-columns: 2.6rem 1fr; gap: 0 1rem; }
+ol.steps > li::before {
+  content: counter(s); grid-row: span 3;
+  width: 2.2rem; height: 2.2rem; border-radius: 50%;
+  display: grid; place-items: center;
+  font: 600 0.95rem/1 var(--mono); color: var(--ink);
+  border: 1.5px solid var(--line); background: var(--surface);
+}
+ol.steps > li > h3 { margin-top: 0.3rem; font-size: 1.1rem; }
+ol.steps > li > p { margin-top: 0.35rem; }
+
+/* callouts: tinted fill, labeled; no side rails */
+.callout { background: var(--sunken); border-radius: var(--radius); padding: 1rem 1.15rem; margin-top: 1.25rem; }
+.callout > .eyebrow { display: block; margin-bottom: 0.4rem; }
+.callout.ln { background: var(--ln-soft); color: var(--ink); }
+.callout.btc { background: var(--btc-soft); color: var(--ink); }
+.callout.ln > .eyebrow { color: var(--ln); }
+.callout.btc > .eyebrow { color: var(--btc); }
+.callout p:first-of-type { margin-top: 0; }
+
+/* label/value ledgers */
+.ledger { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; margin-top: 1rem; }
+.ledger th, .ledger td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ledger th { font: 600 0.75rem/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.ledger td.r, .ledger th.r { text-align: right; }
+.ledger tfoot td { font-weight: 600; border-bottom: 0; }
+.table-wrap { overflow-x: auto; }
+
+figure { margin: 2rem 0 0; }
+figure .canvas { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; overflow-x: auto; }
+figcaption { color: var(--muted); font-size: var(--step--1); margin-top: 0.6rem; max-width: 68ch; }
+
+.pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 1rem; margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); font-weight: 500; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* "Armá tu Lightning Address" shortcut (addr.js) */
+.maker { margin-top: 2rem; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem 1.25rem; display: grid; gap: 0.75rem; }
+.maker .k { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.maker input {
+  width: 100%; font: 500 1rem/1.4 var(--mono); padding: 0.7rem 0.85rem; border-radius: 8px;
+  border: 1.5px solid var(--line); background: var(--bg); color: var(--ink);
+}
+.maker input::placeholder { color: var(--muted); }
+.maker input:focus { border-color: var(--ln); }
+.maker-out { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; }
+.addr-out { flex: 1 1 280px; min-width: 0; font: 500 clamp(0.85rem, 2.2vw, 1.2rem)/1.4 var(--mono); overflow-wrap: anywhere; }
+.addr-out .on { color: var(--btc); }
+.addr-out .at { color: var(--ln); font-weight: 600; }
+.addr-out.is-example { opacity: 0.6; }
+.maker button {
+  font: 600 0.92rem/1 var(--body); padding: 0.7rem 1.1rem; border-radius: 8px; cursor: pointer;
+  border: 1.5px solid var(--ink); background: var(--ink); color: var(--bg);
+}
+.maker button:disabled { opacity: 0.35; cursor: not-allowed; }
+.maker-status { margin: 0; font-size: var(--step--1); color: var(--muted); }
+.maker[data-state="ok"] .maker-status { color: var(--ok); }
+.maker[data-state="error"] .maker-status { color: var(--bad); }
+.maker[data-state="error"] input { border-color: var(--bad); }
+
+
+/* ---- additions for the website (not in the artifact) ---- */
+.topnav .nav-sep { width: 1px; height: 1em; background: var(--line); }
+.site-footer { margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--step--1); display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
+.site-footer a { color: inherit; }
+.halt-banner { margin-top: 1rem; padding: 0.8rem 1rem; border-radius: var(--radius); background: var(--btc-soft); color: var(--ink); font-weight: 500; }
+/* Steps with more than three children (e.g. the address maker inside a step): keep
+   every child in the text column; the artifact let the 4th one fall under the number. */
+ol.steps > li > * { grid-column: 2; }

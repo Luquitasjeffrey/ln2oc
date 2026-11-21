@@ -49,6 +49,7 @@ Invariantes (ver `app/worker.py`):
 - Firmar antes del settle o reservar UTXOs con `FundPsbt` antes del settle: **descartado** por el usuario. Con `ACCEPTED` solo se mira el saldo.
 - REST → **gRPC** con stubs generados desde `proto/` (fijados a LND v0.20.0-beta).
 - Detección de pagos: **polling síncrono desde el hilo worker**, `LookupInvoice` de cada `PENDING` de a una, cada `INVOICE_POLL_INTERVAL_SECONDS` (60 s, decidido por el usuario). Tope `MAX_PENDING_SWAPS`. Sin suscripciones. Implementado.
+- Sitio web: **lo sirve otro servidor** (nginx de `web/`). FastAPI no sirve archivos del front: solo redirige `GET /` (y HEAD) a `FRONTEND_URL`. El front lee `/api/info`.
 - Boltz está caído (desde agosto de 2026); no contarlo como opción de reposición.
 
 ## Estructura
@@ -63,6 +64,8 @@ Invariantes (ver `app/worker.py`):
 | `app/validator.py` | Direcciones bech32/bech32m/base58 → scriptPubKey |
 | `app/fees.py` | Estimación de fee y cálculo de payout (enteros, basis points) |
 | `app/halt.py` | `FatalSwapError`, `halt_process` |
+| `app/info.py` | `GET /` → redirect a `FRONTEND_URL`; `GET /api/info` (parámetros de la instancia, commit) |
+| `web/` | Sitio estático React + Vite (multi-página), servido por su propio nginx. Ver `web/` y README |
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
 | `app/config.py` | Settings con validación (falla al arrancar si algo está fuera de rango) |
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
@@ -85,12 +88,11 @@ No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio s
 
 ## Artifact de documentación
 
-Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con supuestos, usuario, operador, animación `flujo.html`, arquitectura). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
+Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con supuestos, usuario, operador, animación `flujo.html`, arquitectura). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). El sitio `web/` porta este contenido (páginas en `web/src/pages/`, animación en `web/src/flujo/animation.js`): si cambia el flujo, actualizar ambos. Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
 
 ## TODO priorizado
 
 **Decidido y sin implementar**
-2. Atajo "pegá tu dirección → `@ln2oc.com`": hoy solo existe en el artifact (`addr.js`, validación en el navegador). Si va al producto: landing en `/`.
 3. Macaroon con permisos mínimos (diferido por el usuario).
 
 **El artifact lo promete y el código no lo cumple del todo**
