@@ -26,4 +26,5 @@ docker compose up -d --build web                    # PUBLIC_API_URL fija la URL
 
 - Los valores de la instancia (red, dominio, comisión, mínimos, minería, intervalo de polling) salen de `/api/info`, no hardcodeados. Si se agrega un parámetro, agregarlo en `app/info.py`, `InstanceInfo` y `DEFAULT_INFO`.
 - `VITE_API_URL` queda fija en el build; en producción hay que pasarla (p. ej. `https://ln2oc.com`).
+- El nav tiene links a GitHub y al Telegram de contacto (`VITE_CONTACT_TELEGRAM`, compose `CONTACT_TELEGRAM`; por defecto `LucasJeffreyP2P`, el del usuario). Cada operador pone el suyo.
 - Versiones de dependencias fijadas exactas en `package.json`.

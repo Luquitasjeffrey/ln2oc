@@ -10,6 +10,8 @@ COPY . .
 # Public URL of the ln2oc API, baked into the static bundle.
 ARG VITE_API_URL=http://127.0.0.1:8000
 ENV VITE_API_URL=${VITE_API_URL}
+ARG VITE_CONTACT_TELEGRAM=LucasJeffreyP2P
+ENV VITE_CONTACT_TELEGRAM=${VITE_CONTACT_TELEGRAM}
 RUN npm test && npm run build
 
 # --- Stage 2: serve ---
