@@ -4,6 +4,7 @@ review is reproduced by injecting an *ambiguous* failure (the call succeeds in L
 but we never learn it) and checking that the payout happens exactly once.
 """
 import hashlib
+import json
 import os
 import time
 
@@ -12,13 +13,14 @@ import pytest
 from app.config import settings
 from app.fees import current_fee_rate_sat_per_vbyte
 from app.lnd import InvoiceState, LndUnavailable, lnd_client
+from app.lnrpc import lightning_pb2 as ln
 from app.models import SwapStatus
 from app.swaps import SwapError, create_swap
 from app.tx import parse_tx
 from app.validator import address_to_script
 from app.worker import SwapWorker
 from tests.conftest import (
-    get_bitcoind_tx, get_swap, insert_swap, leases_for, mine_blocks, new_dest_address,
+    bitcoin_cli, get_bitcoind_tx, get_swap, insert_swap, leases_for, mine_blocks, new_dest_address,
     received_by, send_to_kross_unconfirmed, tick_until, wait_for_status,
 )
 
@@ -65,6 +67,43 @@ def test_address_to_script():
         "76a91477bff20c60e522dfaa3350c39b030a5d004e839a88ac"
     assert address_to_script("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy", "mainnet").hex() == \
         "a914b472a266d0bd89c13706a4132ccfb16f7c3b9fcb87"
+    # testnet4 uses the same prefixes as testnet3 (tb / 0x6f / 0xc4).
+    tb = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx"
+    assert address_to_script(tb, "testnet4") == address_to_script(tb, "testnet") is not None
+    assert address_to_script(tb, "mainnet") is None
+    assert address_to_script(tb, "signet") is None  # unknown network: nothing is valid
+    # bech32 is case-insensitive: the all-uppercase form (as in QR codes) decodes the same.
+    assert address_to_script(REGTEST_ADDR.upper(), "regtest") == address_to_script(REGTEST_ADDR, "regtest")
+
+
+def test_new_swaps_accept_only_bech32():
+    """A Lightning Address name is lowercase (LUD-16): base58 is case-sensitive, so legacy
+    addresses are refused for new swaps, but still decoded for paying stored ones."""
+    from app.validator import validate_bitcoin_address
+    assert validate_bitcoin_address("bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr", "mainnet")
+    assert validate_bitcoin_address("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0", "mainnet")
+    assert validate_bitcoin_address(REGTEST_ADDR.upper(), "regtest")
+    for legacy in ("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"):
+        assert not validate_bitcoin_address(legacy, "mainnet")
+        assert address_to_script(legacy, "mainnet") is not None
+
+
+@pytest.mark.asyncio
+async def test_lightning_address_refuses_legacy_and_lowercases_bech32(env, client):
+    legacy = bitcoin_cli("getnewaddress", "", "legacy")
+    assert legacy != legacy.lower()
+    for path in (f"/.well-known/lnurlp/{legacy}", f"/lnurlp/cb?btc_address={legacy}&amount={100_000 * 1000}"):
+        res = await client.get(path)
+        assert res.status_code == 400 and "bc1q" in res.json()["reason"], res.text
+    up = REGTEST_ADDR.upper()
+    data = (await client.get(f"/.well-known/lnurlp/{up}")).json()
+    assert data["callback"].endswith(f"btc_address={REGTEST_ADDR}")
+    assert f'"{REGTEST_ADDR}@{settings.DOMAIN}"' in data["metadata"]
+    res = await client.get(f"/lnurlp/cb?btc_address={up}&amount={100_000 * 1000}")
+    assert res.status_code == 200, res.text
+    with env["Session"]() as db:
+        from app.models import Swap
+        assert db.query(Swap).filter_by(invoice=res.json()["pr"]).one().btc_address == REGTEST_ADDR
 
 
 def test_process_lock_is_exclusive(env):
@@ -93,6 +132,58 @@ async def test_lnurlp_validation_and_metadata(client):
     data = res.json()
     assert data["tag"] == "payRequest"
     assert REGTEST_ADDR in data["callback"]
+
+
+@pytest.mark.asyncio
+async def test_lightning_address_flow_as_a_wallet_does_it(env, client, payer):
+    """LUD-16 + LUD-06 from the wallet's side: resolve <address>@<domain> at the
+    well-known URL, check the payRequest like a wallet would, call the callback appending
+    `&amount=` (plus extra params some wallets send), check the invoice amount and pay it."""
+    dest = new_dest_address()
+    assert dest == dest.lower()  # LUD-16: the name must be lowercase (a-z0-9-_.)
+    res = await client.get(f"/.well-known/lnurlp/{dest}")
+    assert res.status_code == 200, res.text
+    assert res.headers["access-control-allow-origin"] == "*"  # LUD-01
+    pay_request = res.json()
+    assert pay_request["tag"] == "payRequest"
+    assert isinstance(pay_request["minSendable"], int) and isinstance(pay_request["maxSendable"], int)
+    assert 1 <= pay_request["minSendable"] <= pay_request["maxSendable"]
+    assert pay_request["callback"].startswith(settings.EXTERNAL_URL.rstrip("/") + "/")
+    metadata = json.loads(pay_request["metadata"])  # a JSON array sent as a raw string
+    assert [v for k, v in metadata if k == "text/plain"] and len([k for k, _ in metadata if k == "text/plain"]) == 1
+    assert [v for k, v in metadata if k == "text/identifier"] == [f"{dest}@{settings.DOMAIN}"]
+
+    amount_msat = 100_000 * 1000
+    callback = pay_request["callback"]
+    sep = "&" if "?" in callback else "?"
+    path = callback[len(settings.EXTERNAL_URL.rstrip("/")):]
+    res = await client.get(f"{path}{sep}amount={amount_msat}&comment=hola&nonce=123")
+    assert res.status_code == 200, res.text
+    assert res.headers["access-control-allow-origin"] == "*"
+    body = res.json()
+    assert body.get("status") != "ERROR" and body["routes"] == []
+    stub, _, _ = payer.lnd._stubs()
+    decoded = stub.DecodePayReq(ln.PayReqString(pay_req=body["pr"]), timeout=10)
+    assert decoded.num_msat == amount_msat  # LUD-06: the wallet checks the invoice amount
+    assert decoded.destination == lnd_client.get_info().identity_pubkey
+
+    with env["Session"]() as db:
+        from app.models import Swap
+        swap_id = db.query(Swap).filter_by(invoice=body["pr"]).one().id
+    payment = payer.pay(body["pr"])
+    swap = tick_until(env, swap_id, _DONE)
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    assert swap.status == SwapStatus.BROADCASTED, swap.error
+    assert payment.result(timeout=60).payment_error == ""
+    assert_paid_exactly_once(swap, dest)
+    mine_blocks(1)
+
+
+@pytest.mark.asyncio
+async def test_lnurl_errors_carry_cors_and_reason(client):
+    res = await client.get("/.well-known/lnurlp/invalid_address")
+    assert res.headers["access-control-allow-origin"] == "*"
+    assert res.json()["status"] == "ERROR" and res.json()["reason"]
 
 
 @pytest.mark.asyncio

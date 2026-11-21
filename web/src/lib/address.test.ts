@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { clean, validateAddress } from "./address";
+import { clean, validateAddress, type Network } from "./address";
 
-const ok = async (a: string, net: "mainnet" | "testnet" | "regtest" = "mainnet") => {
+const ok = async (a: string, net: Network = "mainnet") => {
   const r = await validateAddress(a, net);
   return r.state === "ok" ? r.type : r.state === "error" ? `error: ${r.msg}` : "empty";
 };
 
 describe("validateAddress (same vectors as tests/test_swap_e2e.py::test_address_to_script)", () => {
-  it("accepts mainnet SegWit, Taproot and legacy", async () => {
+  it("accepts mainnet SegWit and Taproot, explains why legacy is not", async () => {
     expect(await ok("bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr")).toBe("SegWit (P2WPKH)");
     expect(await ok("bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0")).toBe("Taproot (P2TR)");
-    expect(await ok("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2")).toBe("Legacy (P2PKH)");
-    expect(await ok("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")).toBe("Legacy (P2SH)");
+    expect(await ok("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2")).toMatch(/legacy \(P2PKH\).*bc1q… o bc1p…/);
+    expect(await ok("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")).toMatch(/legacy \(P2SH\)/);
   });
 
   it("is network-aware", async () => {
@@ -20,6 +20,16 @@ describe("validateAddress (same vectors as tests/test_swap_e2e.py::test_address_
     expect(await ok(regtest, "mainnet")).toMatch(/otra red.*mainnet/);
     expect(await ok("bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr", "regtest")).toMatch(/otra red.*regtest/);
     expect(await ok("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", "testnet")).toMatch(/otra red/);
+  });
+
+  it("accepts testnet4 like testnet3 (same prefixes)", async () => {
+    expect(await ok("tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx", "testnet4")).toBe("SegWit (P2WPKH)");
+    expect(await ok("bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr", "testnet4")).toMatch(/otra red.*testnet4/);
+  });
+
+  it("lowercases bech32 for the Lightning Address", async () => {
+    const up = await validateAddress("BC1QMEFUE372SSA4ZFFA4N0HQADSCQP2MYG9UTWRTR", "mainnet");
+    expect(up).toMatchObject({ state: "ok", addr: "bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr" });
   });
 
   it("rejects bad checksums and unsupported scripts", async () => {

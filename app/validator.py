@@ -92,13 +92,13 @@ def _b58decode(v: str) -> Optional[bytes]:
 
 def address_to_script(address: str, network: str = "regtest") -> Optional[bytes]:
     """
-    Decodes a Bitcoin address for the given network (mainnet, testnet, regtest) and
+    Decodes a Bitcoin address for the given network (mainnet, testnet, testnet4, regtest) and
     returns its scriptPubKey, or None if the address is invalid for that network.
     Supports:
     - SegWit v0 (P2WPKH/P2WSH, Bech32) and Taproot v1 (P2TR, Bech32m):
-      bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
-    - Legacy P2PKH: 1 (mainnet), m or n (testnet/regtest)
-    - Legacy P2SH: 3 (mainnet), 2 (testnet/regtest)
+      bc1 (mainnet), tb1 (testnet3 and testnet4), bcrt1 (regtest)
+    - Legacy P2PKH: 1 (mainnet), m or n (testnet3/testnet4/regtest)
+    - Legacy P2SH: 3 (mainnet), 2 (testnet3/testnet4/regtest)
     Future witness versions (v2+) are rejected on purpose: we will not pay to
     scripts nobody can spend today.
     """
@@ -110,22 +110,24 @@ def address_to_script(address: str, network: str = "regtest") -> Optional[bytes]
     expected_hrp = {
         "mainnet": "bc",
         "testnet": "tb",
+        "testnet4": "tb",
         "regtest": "bcrt",
     }.get(network.lower())
+    if expected_hrp is None:
+        return None
 
     # 1. Bech32 / Bech32m
-    if expected_hrp:
-        hrp, data, spec = bech32_decode(address)
-        if hrp == expected_hrp and data is not None and len(data) > 0:
-            witness_version = data[0]
-            program = convertbits(data[1:], 5, 8, False)
-            if program is not None:
-                prog_len = len(program)
-                if witness_version == 0 and prog_len in (20, 32) and spec == Encoding.BECH32:
-                    return bytes([0x00, prog_len]) + bytes(program)
-                if witness_version == 1 and prog_len == 32 and spec == Encoding.BECH32M:
-                    return bytes([0x51, prog_len]) + bytes(program)
-            return None
+    hrp, data, spec = bech32_decode(address)
+    if hrp == expected_hrp and data is not None and len(data) > 0:
+        witness_version = data[0]
+        program = convertbits(data[1:], 5, 8, False)
+        if program is not None:
+            prog_len = len(program)
+            if witness_version == 0 and prog_len in (20, 32) and spec == Encoding.BECH32:
+                return bytes([0x00, prog_len]) + bytes(program)
+            if witness_version == 1 and prog_len == 32 and spec == Encoding.BECH32M:
+                return bytes([0x51, prog_len]) + bytes(program)
+        return None
 
     # 2. Base58Check (P2PKH and P2SH)
     decoded = _b58decode(address)
@@ -149,4 +151,13 @@ def address_to_script(address: str, network: str = "regtest") -> Optional[bytes]
 
 
 def validate_bitcoin_address(address: str, network: str = "regtest") -> bool:
-    return address_to_script(address, network) is not None
+    """Addresses accepted for a NEW swap: only bech32 SegWit v0 (bc1q...) and bech32m
+    Taproot (bc1p...). The address is the name of a Lightning Address, which may only be
+    lowercase (LUD-16): bech32 is case-insensitive, base58 is not, and a wallet that
+    lowercases a legacy address breaks it. (address_to_script still decodes base58, so a
+    payout of an already stored swap never fails because of this policy.)"""
+    script = address_to_script(address, network)
+    return script is not None and script[0] in (0x00, 0x51)
+
+
+ADDRESS_RULE = "only SegWit (bc1q...) and Taproot (bc1p...) addresses are accepted"

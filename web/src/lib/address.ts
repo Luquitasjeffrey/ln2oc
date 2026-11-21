@@ -1,15 +1,17 @@
 /* Bitcoin address validation, mirroring the service (app/validator.py):
-   bech32 v0 (20/32 bytes), bech32m v1 (32 bytes), Base58Check P2PKH/P2SH.
+   bech32 v0 (20/32 bytes) and bech32m v1 (32 bytes) are accepted; Base58Check P2PKH/P2SH
+   is recognized only to explain why it is not.
    Network-aware; runs entirely in the browser. */
 
-export type Network = "mainnet" | "testnet" | "regtest";
+export type Network = "mainnet" | "testnet" | "testnet4" | "regtest";
 
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const HRP: Record<Network, string> = { mainnet: "bc", testnet: "tb", regtest: "bcrt" };
+const HRP: Record<Network, string> = { mainnet: "bc", testnet: "tb", testnet4: "tb", regtest: "bcrt" };
 const B58_VERSIONS: Record<Network, { p2pkh: number; p2sh: number }> = {
   mainnet: { p2pkh: 0x00, p2sh: 0x05 },
   testnet: { p2pkh: 0x6f, p2sh: 0xc4 },
+  testnet4: { p2pkh: 0x6f, p2sh: 0xc4 },
   regtest: { p2pkh: 0x6f, p2sh: 0xc4 },
 };
 
@@ -114,13 +116,23 @@ export function clean(raw: string): string {
   return s;
 }
 
-const NET_NAME: Record<Network, string> = { mainnet: "mainnet", testnet: "testnet", regtest: "regtest" };
+const NET_NAME: Record<Network, string> = { mainnet: "mainnet", testnet: "testnet", testnet4: "testnet4", regtest: "regtest" };
 
 export async function validateAddress(raw: string, network: Network): Promise<AddressResult> {
   const addr = clean(raw);
   if (!addr) return { state: "empty" };
-  const r = bech32(addr, network) ?? (await base58(addr, network));
-  if (r && "type" in r) return { state: "ok", addr, type: r.type };
+  const b = bech32(addr, network);
+  // A Lightning Address name may only be lowercase (LUD-16). bech32 is case-insensitive
+  // (QR codes often carry it in uppercase), so it is lowercased. Base58 is not: a wallet
+  // that lowercases it breaks it, so the service only accepts bech32 (app/validator.py).
+  if (b && "type" in b) return { state: "ok", addr: addr.toLowerCase(), type: b.type };
+  const r = b ?? (await base58(addr, network));
+  if (r && "type" in r)
+    return {
+      state: "error",
+      addr,
+      msg: `Es una dirección legacy ${r.type.replace("Legacy ", "")}. No sirve para una Lightning Address: distingue mayúsculas y las wallets la pasan a minúsculas. Sacá una ${HRP[network]}1q… o ${HRP[network]}1p… de tu cold wallet.`,
+    };
   if (r && "unverified" in r)
     return { state: "error", addr, msg: "Este navegador no puede verificar el checksum. Revisá la dirección a mano." };
   if (r && "wrongNet" in r)

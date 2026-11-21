@@ -5,6 +5,7 @@ import { useInstanceInfo } from "../lib/info";
 const EXAMPLE: Record<string, string> = {
   mainnet: "bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr",
   testnet: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+  testnet4: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
   regtest: "bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz",
 };
 
