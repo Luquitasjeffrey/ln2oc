@@ -30,7 +30,7 @@ PENDING ──(hold invoice ACCEPTED)──► FUNDING ──(tx firmada y guard
 EXPIRED (nunca se pagó)                               FAILED (invoice cancelada, pagador reembolsado)
 ```
 
-1. **LNURL-Pay**: valida la dirección y el monto, estima el fee on-chain (si no hay estimación, rechaza) y reserva saldo.
+1. **LNURL-Pay**: valida la dirección y el monto, y estima el fee on-chain (si no hay estimación, rechaza). **No reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez. La liquidez se compromete recién cuando llega el pago (paso 4) y, si en ese momento no hay fondos, se cancela la hold invoice.
    $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{miner\_fee\_sat}$$
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
 3. **Pago retenido (`ACCEPTED`)**: el worker verifica el monto pagado y que el HTLC tenga un margen de CLTV suficiente (`MIN_CLTV_MARGIN_BLOCKS`).

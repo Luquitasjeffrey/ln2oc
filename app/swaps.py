@@ -1,25 +1,17 @@
 import hashlib
 import logging
 import os
-import threading
 
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.fees import FeeEstimateError, calculate_miner_fee, calculate_payout, current_fee_rate_sat_per_vbyte
 from app.halt import is_halted
 from app.lnd import LndError, LndUnavailable, lnd_client
-from app.models import ACTIVE_RESERVATION_STATUSES, Swap, SwapStatus
+from app.models import Swap, SwapStatus
 from app.validator import validate_bitcoin_address
 
 logger = logging.getLogger("ln2oc.swaps")
-
-# Serializes "check available balance -> issue invoice -> persist reservation" inside
-# this process. Cross-process exclusivity is enforced by the worker's file lock: only
-# one process can run the service at all (see worker.acquire_process_lock).
-_reservation_lock = threading.Lock()
-
 
 class SwapError(Exception):
     def __init__(self, message: str, status_code: int = 400):
@@ -28,28 +20,23 @@ class SwapError(Exception):
         self.status_code = status_code
 
 
-def get_reserved_balance_sat(db: Session) -> int:
-    """Sum of (payout_sat + miner_fee_sat) for every swap that may still need on-chain funds."""
-    stmt = (
-        select(func.coalesce(func.sum(Swap.payout_sat + Swap.miner_fee_sat), 0))
-        .where(Swap.status.in_(ACTIVE_RESERVATION_STATUSES))
-    )
-    return int(db.execute(stmt).scalar() or 0)
+def get_spendable_onchain_balance_sat() -> int:
+    """What the wallet could spend right now. LND already excludes UTXOs leased by an
+    in-flight payout from confirmed_balance, and keeps the anchor reserve unspendable.
 
-
-def get_available_onchain_balance_sat(db: Session) -> int:
+    NOTHING is reserved for unpaid invoices: liquidity is only committed when a payment
+    is actually held (the worker leases UTXOs via FundPsbt, or cancels the hold invoice
+    if there are no funds at that moment). Otherwise anyone could lock our liquidity
+    for free by requesting invoices and never paying them."""
     bal = lnd_client.wallet_balance()
-    confirmed = int(bal.confirmed_balance)
-    # LND will not spend the reserve it keeps for anchor channel fee bumping.
-    anchor_reserve = int(bal.reserved_balance_anchor_chan)
-    return confirmed - anchor_reserve - get_reserved_balance_sat(db)
+    return int(bal.confirmed_balance) - int(bal.reserved_balance_anchor_chan)
 
 
 def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     """
-    Validates the request, reserves on-chain balance and issues a hold invoice.
-    The reservation is only advisory: the authoritative funds check happens when the
-    payment arrives (FundPsbt). If funds are missing then, the invoice is canceled.
+    Validates the request and issues a hold invoice. Reserves nothing: the funds
+    check that matters happens when the payment is held (FundPsbt); if funds are
+    missing then, the hold invoice is canceled and the payer is refunded.
     """
     if is_halted():
         raise SwapError("Service halted", status_code=503)
@@ -84,51 +71,51 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     payment_hash_bytes = hashlib.sha256(preimage_bytes).digest()
     lock_id = os.urandom(32)
 
-    with _reservation_lock:
-        try:
-            available = get_available_onchain_balance_sat(db)
-        except (LndUnavailable, LndError) as e:
-            logger.error("Could not read on-chain balance: %s", e)
-            raise SwapError("Lightning node unavailable, try again later.", status_code=503)
-        if available < required_sat:
-            raise SwapError(
-                f"Insufficient available on-chain balance: {available} sats available, {required_sat} sats required.",
-                status_code=400,
-            )
-
-        memo = f"Swap-out to {btc_address[:10]}...: {payout_sat} sats"
-        try:
-            inv = lnd_client.add_hold_invoice(
-                payment_hash=payment_hash_bytes,
-                value_sat=amount_sat,
-                memo=memo,
-                expiry_seconds=settings.INVOICE_EXPIRY_SECONDS,
-                cltv_expiry=settings.HOLD_INVOICE_CLTV_EXPIRY,
-            )
-        except (LndUnavailable, LndError) as e:
-            # If the invoice was created but we never answered, nobody has the payment
-            # request, so it cannot be paid; it simply expires.
-            logger.error("Failed to create LND hold invoice: %s", e)
-            raise SwapError("Failed to generate Lightning invoice with LND", status_code=502)
-
-        invoice_str = inv.payment_request
-        if not invoice_str:
-            raise SwapError("LND did not return payment_request", status_code=502)
-
-        swap = Swap(
-            payment_hash=payment_hash_bytes.hex(),
-            preimage=preimage_bytes.hex(),
-            btc_address=btc_address,
-            amount_sat=amount_sat,
-            payout_sat=payout_sat,
-            miner_fee_sat=miner_fee_sat,
-            invoice=invoice_str,
-            lock_id=lock_id.hex(),
-            status=SwapStatus.PENDING,
+    # Fail fast if we obviously could not pay this right now. Not a reservation.
+    try:
+        spendable = get_spendable_onchain_balance_sat()
+    except (LndUnavailable, LndError) as e:
+        logger.error("Could not read on-chain balance: %s", e)
+        raise SwapError("Lightning node unavailable, try again later.", status_code=503)
+    if spendable < required_sat:
+        raise SwapError(
+            f"Insufficient available on-chain balance: {spendable} sats available, {required_sat} sats required.",
+            status_code=400,
         )
-        db.add(swap)
-        db.commit()
-        db.refresh(swap)
+
+    memo = f"Swap-out to {btc_address[:10]}...: {payout_sat} sats"
+    try:
+        inv = lnd_client.add_hold_invoice(
+            payment_hash=payment_hash_bytes,
+            value_sat=amount_sat,
+            memo=memo,
+            expiry_seconds=settings.INVOICE_EXPIRY_SECONDS,
+            cltv_expiry=settings.HOLD_INVOICE_CLTV_EXPIRY,
+        )
+    except (LndUnavailable, LndError) as e:
+        # If the invoice was created but we never answered, nobody has the payment
+        # request, so it cannot be paid; it simply expires.
+        logger.error("Failed to create LND hold invoice: %s", e)
+        raise SwapError("Failed to generate Lightning invoice with LND", status_code=502)
+
+    invoice_str = inv.payment_request
+    if not invoice_str:
+        raise SwapError("LND did not return payment_request", status_code=502)
+
+    swap = Swap(
+        payment_hash=payment_hash_bytes.hex(),
+        preimage=preimage_bytes.hex(),
+        btc_address=btc_address,
+        amount_sat=amount_sat,
+        payout_sat=payout_sat,
+        miner_fee_sat=miner_fee_sat,
+        invoice=invoice_str,
+        lock_id=lock_id.hex(),
+        status=SwapStatus.PENDING,
+    )
+    db.add(swap)
+    db.commit()
+    db.refresh(swap)
 
     logger.info("Created swap %s for address %s, amount %d sat, payout %d sat, max miner fee %d sat",
                 swap.id, btc_address, amount_sat, payout_sat, miner_fee_sat)
