@@ -38,13 +38,16 @@ class Settings(BaseSettings):
     # Must stay well above LND's own hold-invoice auto-cancel delta (~12 blocks).
     MIN_CLTV_MARGIN_BLOCKS: int = 40
 
-    # Invoice updates arrive ONLY through SubscribeSingleInvoice (one stream per PENDING
-    # swap). This interval only paces retries of our own in-flight operations
-    # (fund/settle/publish/cancel) while LND is unavailable.
+    # Payment detection: the worker thread looks up every PENDING invoice, one after
+    # another, once per this interval (no subscriptions, no extra threads). A held HTLC
+    # stays in flight for the payer meanwhile, so a long interval only delays the payout.
+    INVOICE_POLL_INTERVAL_SECONDS: float = 60.0
+    # Retry pace for our own in-flight operations (fund/settle/publish/cancel, or a held
+    # payment waiting for the payout slot). Never re-polls every PENDING invoice.
     WORKER_RETRY_INTERVAL_SECONDS: float = 2.0
-    # Max concurrent invoice subscriptions. New swaps are refused (503) beyond this,
-    # since an unwatched invoice would never be noticed.
-    MAX_WATCHED_INVOICES: int = 5000
+    # Max PENDING swaps (unpaid invoices). Bounds the work of each poll: new swaps are
+    # refused (503) beyond this.
+    MAX_PENDING_SWAPS: int = 5000
 
     # LNURL & Server
     DOMAIN: str = "127.0.0.1:8000"
@@ -79,8 +82,12 @@ class Settings(BaseSettings):
             errors.append("HOLD_INVOICE_CLTV_EXPIRY must exceed MIN_CLTV_MARGIN_BLOCKS by > 10 blocks")
         if not (0 < self.WORKER_RETRY_INTERVAL_SECONDS <= 60):
             errors.append("Require 0 < WORKER_RETRY_INTERVAL_SECONDS <= 60")
-        if self.MAX_WATCHED_INVOICES < 1:
-            errors.append("MAX_WATCHED_INVOICES must be >= 1")
+        if not (1 <= self.INVOICE_POLL_INTERVAL_SECONDS <= 600):
+            errors.append("Require 1 <= INVOICE_POLL_INTERVAL_SECONDS <= 600")
+        if self.INVOICE_EXPIRY_SECONDS <= 2 * self.INVOICE_POLL_INTERVAL_SECONDS:
+            errors.append("INVOICE_EXPIRY_SECONDS must exceed 2 x INVOICE_POLL_INTERVAL_SECONDS")
+        if self.MAX_PENDING_SWAPS < 1:
+            errors.append("MAX_PENDING_SWAPS must be >= 1")
         if self.UTXO_LEASE_SECONDS < 600:
             errors.append("UTXO_LEASE_SECONDS must be >= 600")
         if errors:

@@ -159,13 +159,6 @@ class LndClient:
         _, invoices, _ = self._stubs()
         return self._call(invoices.LookupInvoiceV2, inv.LookupInvoiceMsg(payment_hash=payment_hash), "LookupInvoiceV2")
 
-    def subscribe_single_invoice(self, payment_hash: bytes):
-        """Server stream of invoice updates. The first message is the current state.
-        Returns the grpc call: iterate it for updates, .cancel() to stop.
-        Iteration raises grpc.RpcError when the stream breaks."""
-        _, invoices, _ = self._stubs()
-        return invoices.SubscribeSingleInvoice(inv.SubscribeSingleInvoiceRequest(r_hash=payment_hash))
-
     def settle_invoice(self, preimage: bytes) -> None:
         _, invoices, _ = self._stubs()
         self._call(invoices.SettleInvoice, inv.SettleInvoiceMsg(preimage=preimage), "SettleInvoice")
