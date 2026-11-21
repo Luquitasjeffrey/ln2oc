@@ -111,6 +111,35 @@ async def test_lnurlp_rejects_bad_amounts(client):
     assert res.status_code == 400 and "whole number" in res.json()["reason"]
 
 
+@pytest.mark.asyncio
+async def test_root_only_redirects_to_the_website(client, monkeypatch):
+    monkeypatch.setattr(settings, "FRONTEND_URL", None)
+    assert (await client.get("/")).status_code == 404
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://web.example")
+    for method in ("GET", "HEAD"):
+        res = await client.request(method, "/", follow_redirects=False)
+        assert res.status_code == 302 and res.headers["location"] == "https://web.example"
+    # The service serves no frontend files at all.
+    assert (await client.get("/index.html")).status_code == 404
+    assert (await client.get(f"/.well-known/lnurlp/{REGTEST_ADDR}")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_api_info_reports_instance_parameters(client):
+    from app.info import git_commit
+    res = await client.get("/api/info")
+    assert res.status_code == 200
+    assert res.headers["access-control-allow-origin"] == "*"
+    data = res.json()
+    assert data["network"] == "regtest"
+    assert data["swap_fee_rate_bps"] == round(settings.SWAP_FEE_RATE * 10_000)
+    assert data["max_swap_sat"] == settings.MAX_SWAP_SAT
+    assert data["fee_rate_sat_vb"] == current_fee_rate_sat_per_vbyte(lnd_client)
+    assert data["miner_fee_sat"] == calculate_miner_fee(data["fee_rate_sat_vb"])
+    assert data["commit"] == git_commit() != "unknown"
+    assert data["halted"] is False
+
+
 def test_insufficient_onchain_balance_rejected_upfront(env, monkeypatch):
     confirmed = int(lnd_client.wallet_balance().confirmed_balance)
     monkeypatch.setattr(settings, "MAX_SWAP_SAT", confirmed + 20_000_000)

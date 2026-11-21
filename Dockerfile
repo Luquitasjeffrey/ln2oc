@@ -14,6 +14,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+
+# Commit reported by /api/info (no .git inside the image).
+ARG GIT_COMMIT=
+ENV GIT_COMMIT=${GIT_COMMIT}
 COPY --from=protos /build/app/lnrpc ./app/lnrpc
 
 # Run as an unprivileged user whose uid can read the mounted macaroon (LND files are 0640).

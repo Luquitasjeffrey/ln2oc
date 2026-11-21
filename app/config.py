@@ -2,6 +2,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 
 
+APP_VERSION = "0.3.0"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -58,6 +61,12 @@ class Settings(BaseSettings):
     # Exclusive lock guaranteeing a single swap worker. Defaults to "<sqlite db path>.worker.lock".
     WORKER_LOCK_FILE: str | None = None
 
+    # Website: served by its own server, never by this service. GET / redirects here
+    # (unset: GET / is a 404).
+    FRONTEND_URL: str | None = None
+    # Commit reported by /api/info (set at docker build). Unset: `git rev-parse HEAD`.
+    GIT_COMMIT: str | None = None
+
     # App
     LOG_LEVEL: str = "INFO"
 
@@ -90,6 +99,8 @@ class Settings(BaseSettings):
             errors.append("MAX_PENDING_SWAPS must be >= 1")
         if self.UTXO_LEASE_SECONDS < 600:
             errors.append("UTXO_LEASE_SECONDS must be >= 600")
+        if self.FRONTEND_URL and not self.FRONTEND_URL.startswith(("https://", "http://")):
+            errors.append("FRONTEND_URL must be an http(s):// URL")
         if errors:
             raise ValueError("Invalid configuration: " + "; ".join(errors))
         return self
