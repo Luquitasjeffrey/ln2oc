@@ -1,11 +1,11 @@
 services:
-  swapservice:
+  ln2oc:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         APP_UID: ${APP_UID:-1000}
-    container_name: ln2oc-swapservice
+    container_name: ln2oc
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -23,7 +23,7 @@ services:
       - MIN_SAT_PER_VBYTE=${MIN_SAT_PER_VBYTE:-1}
       - DOMAIN=${DOMAIN:-127.0.0.1:8000}
       - EXTERNAL_URL=${EXTERNAL_URL:-http://127.0.0.1:8000}
-      - DATABASE_URL=sqlite:////data/swapservice.db
+      - DATABASE_URL=sqlite:////data/ln2oc.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ln2oc_data:/data
