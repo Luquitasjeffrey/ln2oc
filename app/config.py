@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     EXTERNAL_URL: str = "http://127.0.0.1:8000"
 
     # Database
-    DATABASE_URL: str = "sqlite:///./swapservice.db"
+    DATABASE_URL: str = "sqlite:///./ln2oc.db"
     # Exclusive lock guaranteeing a single swap worker. Defaults to "<sqlite db path>.worker.lock".
     WORKER_LOCK_FILE: str | None = None
 

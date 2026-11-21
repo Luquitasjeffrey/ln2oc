@@ -14,7 +14,7 @@ El servicio expone un endpoint estándar de **Lightning Address (LNURL-Pay)** do
 
 Por ejemplo:
 - Regtest: `bcrt1qac9zasaevp62vwnnuylkm3vsy99gxahlm5n0tz@127.0.0.1:8000`
-- Mainnet: `bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr@swapservice.com`
+- Mainnet: `bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr@ln2oc.com`
 
 ### Flujo de Ejecución
 
@@ -91,7 +91,7 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `MAX_WATCHED_INVOICES` | Suscripciones simultáneas máximas; por encima se rechazan swaps nuevos | `5000` |
 | `DOMAIN` | Dominio para metadatos de Lightning Address | `127.0.0.1:8000` |
 | `EXTERNAL_URL` | URL pública o base del servicio | `http://127.0.0.1:8000` |
-| `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./swapservice.db` |
+| `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./ln2oc.db` |
 | `LOG_LEVEL` | Nivel de logs (`INFO`, `DEBUG`, `WARNING`) | `INFO` |
 
 ---
@@ -137,7 +137,7 @@ docker compose up -d --build
 
 Para ver los logs en tiempo real:
 ```bash
-docker compose logs -f swapservice
+docker compose logs -f ln2oc
 ```
 
 Para detener el servicio:
