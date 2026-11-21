@@ -36,5 +36,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # The website: its own server (nginx with static files), separate from the API.
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_API_URL: ${PUBLIC_API_URL:-http://127.0.0.1:8000}
+    container_name: ln2oc-web
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+
 volumes:
   ln2oc_data:

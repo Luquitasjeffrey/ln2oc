@@ -1,0 +1,42 @@
+  .hero { padding-block: 3rem 0.5rem; }
+  pre {
+    font: 400 0.88rem/1.55 var(--mono); background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 0.9rem 1.1rem; overflow-x: auto; margin: 0.75rem 0 0;
+  }
+  pre .c { color: var(--muted); }
+  /* capital diagram */
+  .cap { color: var(--ink); width: 100%; height: auto; display: block; min-width: 640px; }
+  .cap text { font-family: var(--body); font-size: 13px; fill: currentColor; }
+  .cap .lbl { font-family: var(--display); font-weight: 600; font-size: 14px; }
+  .cap .small { font-size: 12px; fill: var(--muted); }
+  .cap .num { font-family: var(--mono); font-size: 12.5px; }
+  .cap .frame { fill: none; stroke: currentColor; stroke-width: 1.5; }
+  .cap .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; }
+  .cap .btcfill { fill: var(--btc); opacity: 0.85; }
+  .cap .lnfill { fill: var(--ln); opacity: 0.85; }
+  .cap .inbound { fill: var(--ln); opacity: 0.18; }
+  .cap .btcline { stroke: var(--btc); stroke-width: 2; fill: none; }
+  .cap .lnline { stroke: var(--ln); stroke-width: 2; fill: none; }
+  .cap .loop { stroke: currentColor; stroke-width: 1.5; fill: none; stroke-dasharray: 6 5; }
+  .cap .btct { fill: var(--btc); }
+  .cap .lnt { fill: var(--ln); }
+  .cap .head-btc { fill: var(--btc); }
+  .cap .head-ln { fill: var(--ln); }
+  .cap .head-ink { fill: currentColor; }
+  .sizing { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-top: 1.25rem; }
+  @media (max-width: 760px) { .sizing { grid-template-columns: 1fr; } }
+  .size { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.1rem; }
+  .size h3 { margin: 0.35rem 0 0; font-size: 1.05rem; }
+  .size p { color: var(--muted); font-size: 0.95rem; margin-top: 0.4rem; }
+  .refill td { font-size: 0.95rem; }
+  .refill td:first-child { min-width: 11rem; }
+  .refill td:last-child { min-width: 18rem; color: var(--muted); }
+  .refill td:nth-child(4) { min-width: 9rem; }
+  .muted { color: var(--muted); font-size: 0.88rem; }
+  .pill { display: inline-block; white-space: nowrap; font: 600 0.72rem/1 var(--mono); padding: 0.3rem 0.5rem; border-radius: 999px; }
+  .ok-pill { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .warn-pill { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
+  .bad-pill { background: color-mix(in srgb, var(--bad) 14%, transparent); color: var(--bad); }
+  .todo { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: 0.6rem; }
+  .todo li { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.5rem; }
+  .todo li::before { content: ""; width: 0.95rem; height: 0.95rem; border: 1.5px solid var(--warn); border-radius: 3px; margin-top: 0.3em; }
