@@ -27,8 +27,14 @@ function NavLink({ page, current, href, label }: { page: PageKey; current: PageK
 export function Nav({ current }: { current: PageKey }) {
   return (
     <nav className="topnav" aria-label="Secciones">
-      <a className="brand" href="/" aria-current={current === "index" ? "page" : undefined}>
-        ln<b>2</b>oc
+      <a className="brand" href="/" aria-current={current === "index" ? "page" : undefined}
+         title="ln2oc: Lightning Network to on-chain">
+        <span className="brand-logo">
+          ln<b>2</b>oc
+        </span>
+        <span className="brand-sub">
+          <b>L</b>ightning <b>N</b>etwork <b>to</b> <b>o</b>n-<b>c</b>hain
+        </span>
       </a>
       {USER_LINKS.map(([p, href, label]) => (
         <NavLink key={p} page={p} current={current} href={href} label={label} />
