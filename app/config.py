@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # Must stay well above LND's own hold-invoice auto-cancel delta (~12 blocks).
     MIN_CLTV_MARGIN_BLOCKS: int = 40
 
+    # Invoice updates arrive ONLY through SubscribeSingleInvoice (one stream per PENDING
+    # swap). This interval only paces retries of our own in-flight operations
+    # (fund/settle/publish/cancel) while LND is unavailable.
+    WORKER_RETRY_INTERVAL_SECONDS: float = 2.0
+    # Max concurrent invoice subscriptions. New swaps are refused (503) beyond this,
+    # since an unwatched invoice would never be noticed.
+    MAX_WATCHED_INVOICES: int = 5000
+
     # LNURL & Server
     DOMAIN: str = "127.0.0.1:8000"
     EXTERNAL_URL: str = "http://127.0.0.1:8000"
@@ -69,6 +77,10 @@ class Settings(BaseSettings):
             errors.append("MIN_CLTV_MARGIN_BLOCKS must be >= 20")
         if self.HOLD_INVOICE_CLTV_EXPIRY <= self.MIN_CLTV_MARGIN_BLOCKS + 10:
             errors.append("HOLD_INVOICE_CLTV_EXPIRY must exceed MIN_CLTV_MARGIN_BLOCKS by > 10 blocks")
+        if not (0 < self.WORKER_RETRY_INTERVAL_SECONDS <= 60):
+            errors.append("Require 0 < WORKER_RETRY_INTERVAL_SECONDS <= 60")
+        if self.MAX_WATCHED_INVOICES < 1:
+            errors.append("MAX_WATCHED_INVOICES must be >= 1")
         if self.UTXO_LEASE_SECONDS < 600:
             errors.append("UTXO_LEASE_SECONDS must be >= 600")
         if errors:

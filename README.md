@@ -42,6 +42,7 @@ Garantías:
 - Cada paso es re-ejecutable tras una caída en cualquier punto. Un resultado ambiguo de LND (timeout, conexión cortada) nunca se interpreta como fracaso: se vuelve a consultar el estado real.
 - Cada transición es un compare-and-set sobre el estado guardado, y hay como máximo **un payout en vuelo** a la vez.
 - Un único proceso: el worker toma un lock exclusivo de archivo (`WORKER_LOCK_FILE`). Un segundo proceso (otro `--workers` de uvicorn, otro contenedor sobre el mismo volumen) se niega a arrancar.
+- **Detección de pagos solo por `SubscribeSingleInvoice`**, una suscripción por swap `PENDING`, sin polling de invoices. Al suscribirse (al arrancar o al reconectar un stream cortado), LND manda primero el estado actual de la invoice, así que no se pierden eventos. Los watchers solo despiertan al worker: no deciden ni escriben en la DB; el worker vuelve a consultar el estado en LND y aplica la máquina de estados. Si hay más swaps pendientes que `MAX_WATCHED_INVOICES`, se rechazan swaps nuevos (503), y al arrancar el servicio se niega a iniciar, porque una invoice sin suscripción no se detectaría nunca.
 
 ### 🚨 `MANUAL_REVIEW`
 
@@ -86,6 +87,8 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `HOLD_INVOICE_CLTV_EXPIRY` | CLTV final pedido para los HTLC de la hold invoice | `144` |
 | `MIN_CLTV_MARGIN_BLOCKS` | Margen mínimo de CLTV para settlear; si no alcanza, se reembolsa | `40` |
 | `WORKER_LOCK_FILE` | Lock de proceso único | `<db>.worker.lock` |
+| `WORKER_RETRY_INTERVAL_SECONDS` | Reintento de nuestras operaciones en curso (fund/settle/publish/cancel) mientras LND no responde | `2` |
+| `MAX_WATCHED_INVOICES` | Suscripciones simultáneas máximas; por encima se rechazan swaps nuevos | `5000` |
 | `DOMAIN` | Dominio para metadatos de Lightning Address | `127.0.0.1:8000` |
 | `EXTERNAL_URL` | URL pública o base del servicio | `http://127.0.0.1:8000` |
 | `DATABASE_URL` | Conexión SQLAlchemy a la base SQLite | `sqlite:///./swapservice.db` |
@@ -118,7 +121,7 @@ El servidor quedará escuchando en `http://localhost:8000`. Al iniciar:
 - Toma el lock de proceso único.
 - Crea las tablas y verifica que el schema coincida con los modelos (no hay migraciones: con una DB vieja se niega a arrancar).
 - Se niega a arrancar si hay swaps en `MANUAL_REVIEW` o si LND está en otra red que `BITCOIN_NETWORK`.
-- Inicia el worker en un hilo dedicado, que retoma cualquier swap en curso desde su estado guardado.
+- Se suscribe a todas las invoices pendientes e inicia el worker en un hilo dedicado, que retoma cualquier swap en curso desde su estado guardado.
 
 ---
 
@@ -160,6 +163,7 @@ Los tests corren contra Polar (Kross gRPC `10001`, User gRPC `10002`, bitcoind `
 - **Reembolso** (invoice cancelada) cuando no hay fondos al momento del pago, cuando el fee real supera lo cobrado o cuando no hay margen de CLTV.
 - **Fallos ambiguos inyectados**: la respuesta de `FundPsbt`, del settle o de la publicación se pierde después de que LND ejecutó la operación. En todos los casos se paga exactamente una vez.
 - **Reinicio a mitad de payout**: un worker nuevo retoma la tx firmada y guardada.
+- **Worker real por suscripción**: detecta pagos de swaps pendientes al arrancar y de swaps nuevos, detecta invoices canceladas, paga varios pagos simultáneos uno después del otro y se niega a arrancar si no puede suscribirse a todos los pendientes.
 - **Fail loud**: invoice settleada por fuera del flujo y tx rechazada después del settle → `MANUAL_REVIEW` y el worker no procesa nada más.
 
 ---

@@ -102,10 +102,12 @@ def env(tmp_path):
     Session = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
     Base.metadata.create_all(bind=engine)
     fatal = FatalRecorder()
-    worker = SwapWorker(session_factory=Session, poll_interval_seconds=0.2,
+    worker = SwapWorker(session_factory=Session, retry_interval_seconds=0.2,
                         lock_path=str(tmp_path / "worker.lock"), on_fatal=fatal)
-    yield {"Session": Session, "worker": worker, "fatal": fatal, "tmp_path": tmp_path}
-    worker.release_process_lock()
+    e = {"Session": Session, "worker": worker, "fatal": fatal, "tmp_path": tmp_path}
+    yield e
+    for w in {id(worker): worker, id(e["worker"]): e["worker"]}.values():
+        w.stop() if w._running else w.release_process_lock()
     engine.dispose()
 
 
@@ -152,8 +154,11 @@ def get_swap(Session, swap_id: int) -> Swap:
 
 
 def tick_until(env, swap_id: int, statuses, max_ticks: int = 60) -> Swap:
+    """Drives a non-running worker by hand. notify() stands in for the invoice
+    subscription (tested separately with a real worker thread)."""
     statuses = set(statuses)
     for _ in range(max_ticks):
+        env["worker"].notify(swap_id)
         env["worker"].run_tick_guarded()
         swap = get_swap(env["Session"], swap_id)
         if swap.status in statuses or env["fatal"].reasons:
@@ -165,3 +170,14 @@ def tick_until(env, swap_id: int, statuses, max_ticks: int = 60) -> Swap:
 def leases_for(lock_id_hex: str) -> list:
     lock_id = bytes.fromhex(lock_id_hex)
     return [l for l in lnd_client.list_leases() if l.id == lock_id]
+
+
+def wait_for_status(Session, swap_id: int, statuses, timeout: float = 30.0) -> Swap:
+    """Waits (without ticking) for a running worker to move a swap."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        swap = get_swap(Session, swap_id)
+        if swap.status in set(statuses):
+            return swap
+        time.sleep(0.1)
+    return get_swap(Session, swap_id)
