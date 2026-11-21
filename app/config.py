@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     MIN_SAT_PER_VBYTE: int = 1
     # Refuse to operate if LND estimates more than this (protects against absurd estimates).
     MAX_SAT_PER_VBYTE: int = 500
+    # The payout pays the fee rate of the moment it is signed, but never more than this
+    # many times the miner fee estimated before settling (when the payer can still be refunded).
+    MINER_FEE_CAP_MULTIPLIER: float = 2.0
     FEE_TARGET_CONF: int = 2
     # Confirmations required on wallet UTXOs used to fund payouts (0 = allow unconfirmed change).
     ONCHAIN_MIN_CONFS: int = 1
@@ -81,6 +84,8 @@ class Settings(BaseSettings):
             errors.append("SWAP_FEE_RATE supports at most 0.01% (basis point) precision")
         if not (0 < self.MIN_SWAP_SAT <= self.MAX_SWAP_SAT):
             errors.append("Require 0 < MIN_SWAP_SAT <= MAX_SWAP_SAT")
+        if not (1.0 <= self.MINER_FEE_CAP_MULTIPLIER <= 10.0):
+            errors.append("Require 1 <= MINER_FEE_CAP_MULTIPLIER <= 10")
         if not (1 <= self.MIN_SAT_PER_VBYTE <= self.MAX_SAT_PER_VBYTE):
             errors.append("Require 1 <= MIN_SAT_PER_VBYTE <= MAX_SAT_PER_VBYTE")
         if self.ONCHAIN_MIN_CONFS < 0:

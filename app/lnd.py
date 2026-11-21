@@ -135,6 +135,18 @@ class LndClient:
         resp = self._call(wallet.EstimateFee, wk.EstimateFeeRequest(conf_target=conf_target), "EstimateFee")
         return int(resp.sat_per_kw)
 
+    def estimate_tx_fee(self, addr: str, amount_sat: int, conf_target: int, min_confs: int) -> ln.EstimateFeeResponse:
+        """Dry run of the payout tx: LND does the real coin selection over the current
+        wallet and returns its fee (at LND's own rate for conf_target). Nothing is leased."""
+        lnd, _, _ = self._stubs()
+        req = ln.EstimateFeeRequest(
+            AddrToAmount={addr: amount_sat},
+            target_conf=conf_target,
+            min_confs=min_confs,
+            spend_unconfirmed=(min_confs == 0),
+        )
+        return self._call(lnd.EstimateFee, req, "EstimateFee(tx)")
+
     # --- hold invoices -----------------------------------------------------
 
     def add_hold_invoice(

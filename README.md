@@ -35,11 +35,11 @@ PENDING ──(invoice ACCEPTED)──► SETTLING ──(invoice SETTLED)──
 EXPIRED (nunca se pagó)         CANCELING ──► FAILED (invoice cancelada, el pagador no pierde nada)
 ```
 
-1. **LNURL-Pay**: valida la dirección y el monto, y estima el fee on-chain (si no hay estimación, rechaza). **No reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez. La tasa de fee cotizada se guarda con el swap.
-   $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{minería real}$$
-   La cotización usa `miner_fee_sat` = 160 vB × tasa (estimación). Al pagar, el usuario paga la minería **real** de su tx a la tasa cotizada: la diferencia con la estimación se mueve entre su output y el cambio (solo cambian montos, el tamaño y el fee no). El operador se queda exactamente con la comisión.
+1. **LNURL-Pay**: valida la dirección y el monto y guarda `gross_sat` = monto − comisión. **No estima minería** (se fija al firmar) y **no reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez.
+   $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \min(\text{vsize}_{tx} \times \text{tasa al firmar},\ 2 \times \text{minería estimada antes del settle})$$
+   La minería la paga el usuario, a la tasa del momento de firmar y con tope de 2× la estimada antes del settle: la tx se fondea pagando `gross_sat` al destino y después el fee real pasa del cambio al output del usuario (solo cambian montos: el tamaño y el fee no). El operador se queda exactamente con la comisión.
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
-3. **Pago retenido (`ACCEPTED`) → `SETTLING`**: el worker verifica el monto pagado, que el HTLC tenga margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`) y **que el saldo on-chain gastable alcance para el payout más la minería**. No fondea ni firma nada. Si algo no alcanza → `CANCELING` y se cancela la hold invoice al toque.
+3. **Pago retenido (`ACCEPTED`) → `SETTLING`**: el worker verifica el monto pagado, que el HTLC tenga margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`) y, con una simulación de la tx en LND (`EstimateFee`, sin reservar UTXOs), **que el saldo alcance y que, aun con la minería en su tope (2× la estimada ahora), el payout no quede en dust**. No fondea ni firma nada. Si algo no alcanza → `CANCELING` y se cancela la hold invoice al toque.
 4. **Settle** de la hold invoice, esperando a que LND la reporte `SETTLED` → `PAID`. Desde acá la plata LN es del operador y se le debe el payout al usuario: cualquier rechazo inesperado va a `MANUAL_REVIEW`.
 5. **Fondeo y firma (`PAID` → `SIGNED`)**: `FundPsbt` elige los UTXOs (a la tasa que se le cobró al usuario) y `FinalizePsbt` firma. La tx se verifica de forma independiente (destino, monto, inputs) y se guarda en la DB con su txid **antes del broadcast**. Si el fondeo falla → `MANUAL_REVIEW` (*USER IS OWED*).
 6. **Publicación** de la tx guardada → `BROADCASTED`. Reintentarla es idempotente: siempre es la misma tx firmada, así que es imposible pagar dos veces.
@@ -85,7 +85,8 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `1000000` |
 | `MIN_PAYOUT_SAT` | Límite mínimo de polvo (dust limit) | `546` |
 | `MIN_SAT_PER_VBYTE` | Tasa de minería mínima (sat/vB) | `1` |
-| `MAX_SAT_PER_VBYTE` | Si LND estima más que esto, se rechazan swaps / se reembolsa | `500` |
+| `MAX_SAT_PER_VBYTE` | Si LND estima más que esto antes del settle, se reembolsa; al firmar, se paga al tope | `500` |
+| `MINER_FEE_CAP_MULTIPLIER` | Tope de la minería del payout: múltiplo de la estimada antes del settle | `2.0` |
 | `FEE_TARGET_CONF` | Bloques objetivo para la estimación de fee | `2` |
 | `ONCHAIN_MIN_CONFS` | Confirmaciones mínimas de los UTXOs usados para pagar | `1` |
 | `UTXO_LEASE_SECONDS` | Duración del lease de UTXOs de un payout en vuelo | `86400` |
@@ -160,7 +161,7 @@ docker compose down
 
 Sitio estático en React + Vite (multi-página: `/`, `/usuario/`, `/operadores/`, `/flujo/`, `/arquitectura/`), con el contenido y el estilo del artifact de documentación. **Lo sirve su propio servidor** (servicio `web` de Docker Compose: nginx en el puerto `8080`). El servicio de swaps no sirve archivos del sitio: solo redirige `GET /` a `FRONTEND_URL`.
 
-El sitio lee los valores reales de la instancia de `GET /api/info` (red, dominio, comisión, límites, minería del momento, versión y commit). Si la API no responde, muestra los valores por defecto.
+El sitio lee los valores reales de la instancia de `GET /api/info` (red, dominio, comisión, límites, tasa de minería actual y tamaño del último payout, versión y commit). Si la API no responde, muestra los valores por defecto.
 
 ```bash
 cd web
@@ -188,7 +189,7 @@ Los tests corren contra Polar (Kross gRPC `10001`, User gRPC `10002`, bitcoind `
 - Lock de proceso exclusivo.
 - **Flujo end-to-end completo** con verificación en bitcoind de que el destino recibió exactamente el payout una sola vez.
 - **Reembolso** (invoice cancelada) cuando no hay saldo al momento del pago o cuando no hay margen de CLTV.
-- **Nada on-chain antes del cobro**: `FundPsbt` y `FinalizePsbt` solo se llaman con la invoice ya `SETTLED`, y el payout usa la tasa cotizada al usuario.
+- **Nada on-chain antes del cobro**: `FundPsbt` y `FinalizePsbt` solo se llaman con la invoice ya `SETTLED`, y la tasa de minería se fija al firmar; el usuario paga la minería real y el operador se queda exactamente con la comisión.
 - **Fallos ambiguos inyectados**: la respuesta de `FundPsbt`, del settle o de la publicación se pierde después de que LND ejecutó la operación. En todos los casos se paga exactamente una vez.
 - **Reinicio a mitad de payout**: un worker nuevo retoma la tx firmada y guardada.
 - **Worker real por suscripción**: detecta pagos de swaps pendientes al arrancar y de swaps nuevos, detecta invoices canceladas, paga varios pagos simultáneos uno después del otro y se niega a arrancar si no puede suscribirse a todos los pendientes.

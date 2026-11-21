@@ -21,6 +21,7 @@ class ParsedTx:
     txid: str
     inputs: list[TxInput]
     outputs: list[TxOutput]
+    vsize: int  # virtual size in vbytes (BIP-141: ceil(weight / 4))
 
 
 class _Reader:
@@ -100,7 +101,9 @@ def _parse(raw: bytes) -> tuple[ParsedTx, list[int], bool]:
         raise ValueError("trailing bytes after transaction")
 
     txid = hashlib.sha256(hashlib.sha256(version + body + locktime).digest()).digest()[::-1].hex()
-    return ParsedTx(txid=txid, inputs=inputs, outputs=outputs), value_offsets, segwit
+    base_size = len(version) + len(body) + len(locktime)
+    vsize = (base_size * 3 + len(raw) + 3) // 4
+    return ParsedTx(txid=txid, inputs=inputs, outputs=outputs, vsize=vsize), value_offsets, segwit
 
 
 # --------------------------------------------------------------------------- PSBT (v0)

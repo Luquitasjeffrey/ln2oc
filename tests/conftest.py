@@ -127,12 +127,9 @@ async def client(env):
     app.dependency_overrides.clear()
 
 
-def insert_swap(Session, amount_sat: int, payout_sat: int, miner_fee_sat: int, address: str,
-                fee_rate_sat_vb: int | None = None) -> tuple[int, str]:
-    """Creates a real hold invoice in Kross and a PENDING swap row, bypassing create_swap checks."""
-    if fee_rate_sat_vb is None:
-        from app.fees import current_fee_rate_sat_per_vbyte
-        fee_rate_sat_vb = current_fee_rate_sat_per_vbyte(lnd_client)
+def insert_swap(Session, amount_sat: int, gross_sat: int, address: str) -> tuple[int, str]:
+    """Creates a real hold invoice in Kross and a PENDING swap row, bypassing create_swap checks.
+    gross_sat is what the user gets before the miner fee (set when the payout is signed)."""
     preimage = os.urandom(32)
     payment_hash = hashlib.sha256(preimage).digest()
     resp = lnd_client.add_hold_invoice(
@@ -142,8 +139,7 @@ def insert_swap(Session, amount_sat: int, payout_sat: int, miner_fee_sat: int, a
     with Session() as db:
         swap = Swap(
             payment_hash=payment_hash.hex(), preimage=preimage.hex(), btc_address=address,
-            amount_sat=amount_sat, payout_sat=payout_sat, miner_fee_sat=miner_fee_sat,
-            fee_rate_sat_vb=fee_rate_sat_vb, invoice=resp.payment_request, lock_id=os.urandom(32).hex(), status=SwapStatus.PENDING,
+            amount_sat=amount_sat, gross_sat=gross_sat, invoice=resp.payment_request, lock_id=os.urandom(32).hex(), status=SwapStatus.PENDING,
         )
         db.add(swap)
         db.commit()
