@@ -25,7 +25,7 @@ def get_spendable_onchain_balance_sat() -> int:
     in-flight payout from confirmed_balance, and keeps the anchor reserve unspendable.
 
     NOTHING is reserved for unpaid invoices: liquidity is only committed when a payment
-    is actually held (the worker leases UTXOs via FundPsbt, or cancels the hold invoice
+    is actually held (the worker checks the balance then, or cancels the hold invoice
     if there are no funds at that moment). Otherwise anyone could lock our liquidity
     for free by requesting invoices and never paying them."""
     bal = lnd_client.wallet_balance()
@@ -35,8 +35,9 @@ def get_spendable_onchain_balance_sat() -> int:
 def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     """
     Validates the request and issues a hold invoice. Reserves nothing: the funds
-    check that matters happens when the payment is held (FundPsbt); if funds are
-    missing then, the hold invoice is canceled and the payer is refunded.
+    check that matters happens when the payment is held (the worker checks the
+    on-chain balance before settling); if funds are missing then, the hold invoice is
+    canceled and the payer keeps their sats.
     """
     if is_halted():
         raise SwapError("Service halted", status_code=503)
@@ -109,6 +110,7 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         amount_sat=amount_sat,
         payout_sat=payout_sat,
         miner_fee_sat=miner_fee_sat,
+        fee_rate_sat_vb=sat_per_vbyte,
         invoice=invoice_str,
         lock_id=lock_id.hex(),
         status=SwapStatus.PENDING,

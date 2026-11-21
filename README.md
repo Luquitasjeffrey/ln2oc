@@ -19,34 +19,34 @@ Por ejemplo:
 ### Flujo de Ejecución
 
 Criterios de diseño, en orden de prioridad:
-1. **No se paga on-chain hasta que el pago Lightning está cobrado** (invoice `SETTLED`).
-2. **Si no hay saldo on-chain cuando llega el pago, se cancela la hold invoice** y el pagador recupera su plata.
+1. **La tx on-chain se firma recién cuando la invoice Lightning está `SETTLED`.** Con la invoice en `ACCEPTED` lo único que se hace es chequear el saldo.
+2. **Si no hay saldo on-chain cuando llega el pago, se cancela la hold invoice** y los sats del pagador nunca salen de su wallet.
 3. **Fail loud**: si algo no está como se espera, el swap queda en `MANUAL_REVIEW` y el proceso se detiene. Es preferible una caída del servicio a una pérdida de fondos.
 
 ```text
-PENDING ──(hold invoice ACCEPTED)──► FUNDING ──(tx firmada y guardada)──► SIGNED ──(settle LN)──► PAID ──(publicar)──► BROADCASTED
-   │                                    └──────────────► CANCELING ◄─────────┘
-   ▼                                                          ▼
-EXPIRED (nunca se pagó)                               FAILED (invoice cancelada, pagador reembolsado)
+PENDING ──(invoice ACCEPTED)──► SETTLING ──(invoice SETTLED)──► PAID ──(tx firmada y guardada)──► SIGNED ──(publicar)──► BROADCASTED
+   │                               │  chequea saldo + margen CLTV
+   ▼                               ▼
+EXPIRED (nunca se pagó)         CANCELING ──► FAILED (invoice cancelada, el pagador no pierde nada)
 ```
 
-1. **LNURL-Pay**: valida la dirección y el monto, y estima el fee on-chain (si no hay estimación, rechaza). **No reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez. La liquidez se compromete recién cuando llega el pago (paso 4) y, si en ese momento no hay fondos, se cancela la hold invoice.
+1. **LNURL-Pay**: valida la dirección y el monto, y estima el fee on-chain (si no hay estimación, rechaza). **No reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez. La tasa de fee cotizada se guarda con el swap.
    $$\text{payout} = \lfloor \text{amount\_sat} \times (1 - \text{SWAP\_FEE\_RATE}) \rfloor - \text{miner\_fee\_sat}$$
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
-3. **Pago retenido (`ACCEPTED`)**: el worker verifica el monto pagado y que el HTLC tenga un margen de CLTV suficiente (`MIN_CLTV_MARGIN_BLOCKS`).
-4. **FUNDING**: `FundPsbt` elige y **bloquea (lease)** UTXOs con un `lock_id` propio del swap, y `FinalizePsbt` firma. **No se transmite nada.** La tx se verifica de forma independiente (destino, monto, inputs, fee no mayor al cobrado) y se guarda en la DB con su txid → `SIGNED`. Si no hay fondos, el fee real supera lo cobrado o no queda margen de CLTV → `CANCELING`.
-5. **Settle** de la hold invoice → `PAID`. Recién ahí la plata LN es del servicio.
+3. **Pago retenido (`ACCEPTED`) → `SETTLING`**: el worker verifica el monto pagado, que el HTLC tenga margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`) y **que el saldo on-chain gastable alcance para el payout más la minería**. No fondea ni firma nada. Si algo no alcanza → `CANCELING` y se cancela la hold invoice al toque.
+4. **Settle** de la hold invoice, esperando a que LND la reporte `SETTLED` → `PAID`. Desde acá la plata LN es del operador y se le debe el payout al usuario: cualquier rechazo inesperado va a `MANUAL_REVIEW`.
+5. **Fondeo y firma (`PAID` → `SIGNED`)**: `FundPsbt` elige los UTXOs (a la tasa que se le cobró al usuario) y `FinalizePsbt` firma. La tx se verifica de forma independiente (destino, monto, inputs) y se guarda en la DB con su txid **antes del broadcast**. Si el fondeo falla → `MANUAL_REVIEW` (*USER IS OWED*).
 6. **Publicación** de la tx guardada → `BROADCASTED`. Reintentarla es idempotente: siempre es la misma tx firmada, así que es imposible pagar dos veces.
 
 Garantías:
 - Cada paso es re-ejecutable tras una caída en cualquier punto. Un resultado ambiguo de LND (timeout, conexión cortada) nunca se interpreta como fracaso: se vuelve a consultar el estado real.
-- Cada transición es un compare-and-set sobre el estado guardado, y hay como máximo **un payout en vuelo** a la vez.
+- Cada transición es un compare-and-set sobre el estado guardado, y hay como máximo **un payout en vuelo** a la vez (de `SETTLING` a `BROADCASTED`), así el chequeo de saldo del siguiente pago ve la wallet después de que el anterior gastó sus UTXOs.
 - Un único proceso: el worker toma un lock exclusivo de archivo (`WORKER_LOCK_FILE`). Un segundo proceso (otro `--workers` de uvicorn, otro contenedor sobre el mismo volumen) se niega a arrancar.
 - **Detección de pagos solo por `SubscribeSingleInvoice`**, una suscripción por swap `PENDING`, sin polling de invoices. Al suscribirse (al arrancar o al reconectar un stream cortado), LND manda primero el estado actual de la invoice, así que no se pierden eventos. Los watchers solo despiertan al worker: no deciden ni escriben en la DB; el worker vuelve a consultar el estado en LND y aplica la máquina de estados. Si hay más swaps pendientes que `MAX_WATCHED_INVOICES`, se rechazan swaps nuevos (503), y al arrancar el servicio se niega a iniciar, porque una invoice sin suscripción no se detectaría nunca.
 
 ### 🚨 `MANUAL_REVIEW`
 
-Si se rompe un invariante que protege fondos (p. ej. la invoice se settleó por fuera del flujo, o la tx fue rechazada **después** del settle, en cuyo caso **se le debe el payout al usuario**), el swap pasa a `MANUAL_REVIEW` con el motivo en la columna `error` y el proceso termina. **El servicio no arranca mientras exista algún swap en ese estado.** Para resolverlo: revisar el caso en LND/bitcoind, actuar a mano (p. ej. publicar la `raw_tx` guardada) y recién entonces cambiar el estado en la DB.
+Si se rompe un invariante que protege fondos (p. ej. la invoice se settleó por fuera del flujo, o el fondeo o la publicación fallan **después** del settle, en cuyo caso **se le debe el payout al usuario**), el swap pasa a `MANUAL_REVIEW` con el motivo en la columna `error` y el proceso termina. **El servicio no arranca mientras exista algún swap en ese estado.** Para resolverlo: revisar el caso en LND/bitcoind, actuar a mano (p. ej. publicar la `raw_tx` guardada) y recién entonces cambiar el estado en la DB.
 
 ---
 
@@ -160,11 +160,12 @@ Los tests corren contra Polar (Kross gRPC `10001`, User gRPC `10002`, bitcoind `
 - Validación de direcciones y conversión a scriptPubKey, montos fuera de rango, saldo insuficiente.
 - Lock de proceso exclusivo.
 - **Flujo end-to-end completo** con verificación en bitcoind de que el destino recibió exactamente el payout una sola vez.
-- **Reembolso** (invoice cancelada) cuando no hay fondos al momento del pago, cuando el fee real supera lo cobrado o cuando no hay margen de CLTV.
+- **Reembolso** (invoice cancelada) cuando no hay saldo al momento del pago o cuando no hay margen de CLTV.
+- **Nada on-chain antes del cobro**: `FundPsbt` y `FinalizePsbt` solo se llaman con la invoice ya `SETTLED`, y el payout usa la tasa cotizada al usuario.
 - **Fallos ambiguos inyectados**: la respuesta de `FundPsbt`, del settle o de la publicación se pierde después de que LND ejecutó la operación. En todos los casos se paga exactamente una vez.
 - **Reinicio a mitad de payout**: un worker nuevo retoma la tx firmada y guardada.
 - **Worker real por suscripción**: detecta pagos de swaps pendientes al arrancar y de swaps nuevos, detecta invoices canceladas, paga varios pagos simultáneos uno después del otro y se niega a arrancar si no puede suscribirse a todos los pendientes.
-- **Fail loud**: invoice settleada por fuera del flujo y tx rechazada después del settle → `MANUAL_REVIEW` y el worker no procesa nada más.
+- **Fail loud**: invoice settleada por fuera del flujo, fondeo fallido o tx rechazada después del settle → `MANUAL_REVIEW` y el worker no procesa nada más.
 
 ---
 

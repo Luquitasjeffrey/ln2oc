@@ -253,21 +253,54 @@ def test_no_onchain_funds_at_payment_time_refunds_payer(env, payer):
     payment = payer.pay(invoice)
     swap = tick_until(env, swap_id, {SwapStatus.FAILED, SwapStatus.BROADCASTED})
     assert not env["fatal"].reasons
-    assert swap.status == SwapStatus.FAILED and "cannot fund payout" in swap.error
+    assert swap.status == SwapStatus.FAILED and "insufficient on-chain balance" in swap.error
     assert swap.raw_tx is None
     assert payment.result(timeout=60).payment_error != ""  # payer got their money back
     assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.CANCELED
     assert leases_for(swap.lock_id) == []
 
 
-def test_fee_above_charged_refunds_payer(env, payer):
+def test_nothing_on_chain_happens_before_the_invoice_is_settled(env, payer, monkeypatch):
+    """At ACCEPTED only the balance is checked: funding and signing only ever run with
+    the invoice already SETTLED."""
+    seen = []
+    real_fund, real_final = lnd_client.fund_psbt, lnd_client.finalize_psbt
+
+    def state_now():
+        return lnd_client.lookup_invoice(bytes.fromhex(get_swap(env["Session"], swap_id).payment_hash)).state
+
+    def spy_fund(**kw):
+        seen.append(("fund", state_now())); return real_fund(**kw)
+
+    def spy_final(psbt):
+        seen.append(("sign", state_now())); return real_final(psbt)
+
+    monkeypatch.setattr(lnd_client, "fund_psbt", spy_fund)
+    monkeypatch.setattr(lnd_client, "finalize_psbt", spy_final)
+    dest = new_dest_address()
     swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
-                                   miner_fee_sat=1, address=new_dest_address())
+                                   miner_fee_sat=current_miner_fee(), address=dest)
     payment = payer.pay(invoice)
-    swap = tick_until(env, swap_id, {SwapStatus.FAILED, SwapStatus.BROADCASTED})
-    assert swap.status == SwapStatus.FAILED and "exceeds charged" in swap.error
-    assert payment.result(timeout=60).payment_error != ""
-    assert leases_for(swap.lock_id) == []
+    swap = tick_until(env, swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    assert payment.result(timeout=60).payment_error == ""
+    assert [k for k, _ in seen] == ["fund", "sign"]
+    assert all(st == InvoiceState.SETTLED for _, st in seen), seen
+    assert_paid_exactly_once(swap, dest)
+    mine_blocks(1)
+
+
+def test_payout_uses_the_fee_rate_charged_to_the_user(env, payer):
+    """The payout is funded at the rate quoted when the invoice was issued (here 2 sat/vB),
+    not at whatever the node estimates when the payment arrives (25 sat/vB in regtest)."""
+    dest = new_dest_address()
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                   miner_fee_sat=320, address=dest, fee_rate_sat_vb=2)
+    payment = payer.pay(invoice)
+    swap = tick_until(env, swap_id, {SwapStatus.BROADCASTED, SwapStatus.FAILED, SwapStatus.MANUAL_REVIEW})
+    assert payment.result(timeout=60).payment_error == ""
+    assert swap.status == SwapStatus.BROADCASTED, swap.error
+    assert swap.actual_fee_sat <= 2 * 200  # ~131 vB at 2 sat/vB; at 25 sat/vB it would be ~3.275
+    mine_blocks(1)
 
 
 def test_insufficient_cltv_margin_refunds_payer(env, payer, monkeypatch):
@@ -331,18 +364,18 @@ def test_lost_publish_response_never_pays_twice(env, payer, monkeypatch):
 
 
 def test_restart_mid_payout_resumes_with_new_worker(env, payer, monkeypatch):
-    """Simulate a crash right after the tx was signed and stored: a fresh worker
-    (new process) must settle and publish that exact tx."""
+    """Simulate a crash right after the tx was signed and stored (before broadcasting):
+    a fresh worker (new process) must publish that exact tx."""
     calls = {"n": 0}
-    real_settle = lnd_client.settle_invoice
+    real_publish = lnd_client.publish_transaction
 
-    def crash_before_settle(preimage):
+    def crash_before_publish(raw, label):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise LndUnavailable("injected: process died before settling")
-        return real_settle(preimage)
+            raise LndUnavailable("injected: process died before broadcasting")
+        return real_publish(raw, label)
 
-    monkeypatch.setattr(lnd_client, "settle_invoice", crash_before_settle)
+    monkeypatch.setattr(lnd_client, "publish_transaction", crash_before_publish)
     dest = new_dest_address()
     swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
                                    miner_fee_sat=current_miner_fee(), address=dest)
@@ -389,6 +422,26 @@ def test_invoice_settled_outside_flow_is_fatal(env, payer):
     env["worker"].run_tick_guarded()
     assert "MANUAL_REVIEW" in env["fatal"].reasons[-1]
     del preimage, payment_hash
+
+
+def test_funding_failure_after_settle_is_fatal(env, payer, monkeypatch):
+    """Once the invoice is settled the user is owed: a funding failure is never
+    'refunded', it halts the service for manual resolution."""
+    from app.lnd import LndError
+    import grpc
+
+    def no_funds(**kw):
+        raise LndError(grpc.StatusCode.UNKNOWN, "insufficient funds available to construct transaction", "FundPsbt")
+
+    monkeypatch.setattr(lnd_client, "fund_psbt", no_funds)
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, payout_sat=40_000,
+                                   miner_fee_sat=current_miner_fee(), address=new_dest_address())
+    payment = payer.pay(invoice)
+    swap = tick_until(env, swap_id, {SwapStatus.MANUAL_REVIEW, SwapStatus.BROADCASTED, SwapStatus.FAILED})
+    assert swap.status == SwapStatus.MANUAL_REVIEW
+    assert "USER IS OWED" in swap.error and swap.raw_tx is None
+    assert payment.result(timeout=60).payment_error == ""  # the payer was charged
+    assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.SETTLED
 
 
 def test_publish_rejected_after_settle_is_fatal(env, payer, monkeypatch):
