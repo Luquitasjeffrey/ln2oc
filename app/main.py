@@ -1,38 +1,68 @@
 import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from app.db import init_db
-from app.lnurl import router as lnurl_router
-from app.worker import swap_worker
+from sqlalchemy import select
+
 from app.config import settings
+from app.db import SessionLocal, init_db, verify_schema
+from app.lnd import lnd_client
+from app.lnurl import router as lnurl_router
+from app.models import Swap, SwapStatus
+from app.worker import swap_worker
 
 logging.basicConfig(
     level=settings.LOG_LEVEL,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s (%(threadName)s): %(message)s",
 )
 logger = logging.getLogger("ln2oc")
 
+_LND_NETWORK = {"mainnet": "mainnet", "testnet": "testnet", "regtest": "regtest"}
+
+
+def startup_checks() -> None:
+    """Every check here refuses to start the service rather than run in a bad state."""
+    init_db()
+    verify_schema()
+
+    with SessionLocal() as db:
+        review = list(db.execute(select(Swap).where(Swap.status == SwapStatus.MANUAL_REVIEW)).scalars())
+    if review:
+        details = "; ".join(f"swap {s.id}: {s.error}" for s in review)
+        raise RuntimeError(f"{len(review)} swap(s) in MANUAL_REVIEW, resolve them before starting: {details}")
+
+    info = lnd_client.get_info()
+    networks = {(c.chain, c.network) for c in info.chains}
+    expected = ("bitcoin", _LND_NETWORK[settings.BITCOIN_NETWORK.lower()])
+    if networks != {expected}:
+        raise RuntimeError(f"LND is on {networks}, but BITCOIN_NETWORK={settings.BITCOIN_NETWORK}")
+    logger.info("LND %s on %s, block %d, synced=%s", info.version, expected[1], info.block_height, info.synced_to_chain)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    logger.info("Initializing database...")
-    init_db()
-    logger.info("Starting background swap worker...")
-    await swap_worker.start()
+    # Lock first: a second process must not even run the checks concurrently.
+    swap_worker.acquire_process_lock()
+    try:
+        startup_checks()
+        swap_worker.start()
+    except Exception:
+        swap_worker.release_process_lock()
+        raise
     yield
-    # Shutdown
-    logger.info("Stopping background swap worker...")
-    await swap_worker.stop()
+    swap_worker.stop()
+
 
 app = FastAPI(
     title="ln2oc - Lightning to On-Chain Swap Service",
     description="Minimal Lightning Address to Bitcoin on-chain swap-out service.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.include_router(lnurl_router)
 
+
 @app.get("/healthz")
-async def healthz():
+def healthz():
     return {"status": "ok"}

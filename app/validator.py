@@ -90,25 +90,30 @@ def _b58decode(v: str) -> Optional[bytes]:
     except Exception:
         return None
 
-def validate_bitcoin_address(address: str, network: str = "regtest") -> bool:
+def address_to_script(address: str, network: str = "regtest") -> Optional[bytes]:
     """
-    Validates Bitcoin address for the given network (mainnet, testnet, regtest).
+    Decodes a Bitcoin address for the given network (mainnet, testnet, regtest) and
+    returns its scriptPubKey, or None if the address is invalid for that network.
     Supports:
-    - SegWit / Taproot (Bech32 / Bech32m): bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
+    - SegWit v0 (P2WPKH/P2WSH, Bech32) and Taproot v1 (P2TR, Bech32m):
+      bc1 (mainnet), tb1 (testnet), bcrt1 (regtest)
     - Legacy P2PKH: 1 (mainnet), m or n (testnet/regtest)
     - Legacy P2SH: 3 (mainnet), 2 (testnet/regtest)
+    Future witness versions (v2+) are rejected on purpose: we will not pay to
+    scripts nobody can spend today.
     """
     if not address or not isinstance(address, str):
-        return False
-    address = address.strip()
+        return None
+    if address != address.strip():
+        return None
 
-    # 1. Bech32 / Bech32m (P2WPKH, P2WSH, P2TR)
     expected_hrp = {
         "mainnet": "bc",
         "testnet": "tb",
         "regtest": "bcrt",
     }.get(network.lower())
 
+    # 1. Bech32 / Bech32m
     if expected_hrp:
         hrp, data, spec = bech32_decode(address)
         if hrp == expected_hrp and data is not None and len(data) > 0:
@@ -116,15 +121,11 @@ def validate_bitcoin_address(address: str, network: str = "regtest") -> bool:
             program = convertbits(data[1:], 5, 8, False)
             if program is not None:
                 prog_len = len(program)
-                # v0: P2WPKH (20 bytes), P2WSH (32 bytes), spec BECH32
                 if witness_version == 0 and prog_len in (20, 32) and spec == Encoding.BECH32:
-                    return True
-                # v1: Taproot (32 bytes), spec BECH32M
+                    return bytes([0x00, prog_len]) + bytes(program)
                 if witness_version == 1 and prog_len == 32 and spec == Encoding.BECH32M:
-                    return True
-                # Future witness versions (2..16) using BECH32M
-                if 2 <= witness_version <= 16 and 2 <= prog_len <= 40 and spec == Encoding.BECH32M:
-                    return True
+                    return bytes([0x51, prog_len]) + bytes(program)
+            return None
 
     # 2. Base58Check (P2PKH and P2SH)
     decoded = _b58decode(address)
@@ -134,13 +135,18 @@ def validate_bitcoin_address(address: str, network: str = "regtest") -> bool:
         expected_checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
         if checksum == expected_checksum:
             version_byte = payload[0]
+            h = payload[1:]
             if network.lower() == "mainnet":
-                # 0x00 = P2PKH (starts with 1), 0x05 = P2SH (starts with 3)
-                if version_byte in (0x00, 0x05):
-                    return True
-            elif network.lower() in ("testnet", "regtest"):
-                # 0x6f = 111 (starts with m or n), 0xc4 = 196 (starts with 2)
-                if version_byte in (0x6F, 0xC4):
-                    return True
+                p2pkh, p2sh = 0x00, 0x05
+            else:
+                p2pkh, p2sh = 0x6F, 0xC4
+            if version_byte == p2pkh:
+                return b"\x76\xa9\x14" + h + b"\x88\xac"
+            if version_byte == p2sh:
+                return b"\xa9\x14" + h + b"\x87"
 
-    return False
+    return None
+
+
+def validate_bitcoin_address(address: str, network: str = "regtest") -> bool:
+    return address_to_script(address, network) is not None

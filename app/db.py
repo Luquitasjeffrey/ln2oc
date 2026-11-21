@@ -33,3 +33,22 @@ def get_db():
 def init_db():
     import app.models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+
+
+def verify_schema():
+    """Fail loud if the on-disk schema does not match the models (there are no
+    migrations: an old database must be migrated or archived by hand)."""
+    from sqlalchemy import inspect
+    import app.models  # noqa: F401
+
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            raise RuntimeError(f"Missing table {table.name!r}")
+        on_disk = {c["name"] for c in insp.get_columns(table.name)}
+        expected = {c.name for c in table.columns}
+        if on_disk != expected:
+            raise RuntimeError(
+                f"Schema mismatch for table {table.name!r}: missing={sorted(expected - on_disk)}, "
+                f"unexpected={sorted(on_disk - expected)}. Refusing to start."
+            )

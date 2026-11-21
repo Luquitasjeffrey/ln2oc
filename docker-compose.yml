@@ -3,12 +3,16 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        APP_UID: ${APP_UID:-1000}
     container_name: ln2oc-swapservice
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
-      - LND_REST_HOST=${DOCKER_LND_REST_HOST:-host.docker.internal:8081}
+      - LND_GRPC_HOST=${DOCKER_LND_GRPC_HOST:-host.docker.internal:10001}
+      # Set if the host you connect through is not in LND's cert SANs (e.g. "localhost").
+      - LND_TLS_SERVER_NAME=${DOCKER_LND_TLS_SERVER_NAME:-}
       - LND_MACAROON_PATH=/lnd/admin.macaroon
       - LND_TLS_CERT_PATH=/lnd/tls.cert
       - BITCOIN_NETWORK=${BITCOIN_NETWORK:-regtest}
@@ -22,11 +26,11 @@ services:
       - DATABASE_URL=sqlite:////data/swapservice.db
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - swap_data:/data
+      - ln2oc_data:/data
       - ${LND_MACAROON_PATH:-/home/lucas/.polar/networks/3/volumes/lnd/Kross/data/chain/bitcoin/regtest/admin.macaroon}:/lnd/admin.macaroon:ro
       - ${LND_TLS_CERT_PATH:-/home/lucas/.polar/networks/3/volumes/lnd/Kross/tls.cert}:/lnd/tls.cert:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
 volumes:
-  swap_data:
+  ln2oc_data:
