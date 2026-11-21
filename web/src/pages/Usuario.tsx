@@ -66,23 +66,23 @@ export default function Usuario() {
             </h3>
             {" "}
             <p>
-              Sirve cualquier dirección de la red del servicio:{" "}
+              Sirve una dirección{" "}
               <code>
                 bc1q…
               </code>
-              {" "}(SegWit),{" "}
+              {" "}(SegWit) o{" "}
               <code>
                 bc1p…
               </code>
-              {" "}(Taproot),{" "}
+              {" "}(Taproot) de la red del servicio. Las legacy (
               <code>
                 1…
               </code>
-              {" "}o{" "}
+              ,{" "}
               <code>
                 3…
               </code>
-              . Alcanza con una wallet watch-only: nunca necesitás firmar nada.
+              ) no: distinguen mayúsculas, y una Lightning Address solo admite minúsculas. Alcanza con una wallet watch-only: nunca necesitás firmar nada.
             </p>
             {" "}
           </li>

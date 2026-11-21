@@ -479,7 +479,7 @@ export default function Arquitectura() {
                   app/validator.py
                 </td>
                 <td>
-                  Valida direcciones Bech32, Bech32m y Base58Check por red, y las convierte a scriptPubKey.
+                  Valida direcciones por red y las convierte a scriptPubKey. Para un swap nuevo acepta solo Bech32 (SegWit v0) y Bech32m (Taproot): una Lightning Address va en minúsculas y Base58Check distingue mayúsculas.
                 </td>
               </tr>
               <tr>

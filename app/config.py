@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     LND_TLS_CERT_PATH: str = "/home/lucas/.polar/networks/3/volumes/lnd/Kross/tls.cert"
 
     # Bitcoin & Swaps
-    BITCOIN_NETWORK: str = "regtest"  # mainnet, testnet, regtest
+    BITCOIN_NETWORK: str = "regtest"  # mainnet, testnet (testnet3), testnet4, regtest
     SWAP_FEE_RATE: float = 0.007     # 0.7% (configurable)
     MIN_PAYOUT_SAT: int = 546        # Dust limit
     MIN_SWAP_SAT: int = 1000
@@ -76,8 +76,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _validate(self):
         errors = []
-        if self.BITCOIN_NETWORK.lower() not in ("mainnet", "testnet", "regtest"):
-            errors.append(f"BITCOIN_NETWORK must be mainnet/testnet/regtest, got {self.BITCOIN_NETWORK!r}")
+        if self.BITCOIN_NETWORK.lower() not in ("mainnet", "testnet", "testnet4", "regtest"):
+            errors.append(f"BITCOIN_NETWORK must be mainnet/testnet/testnet4/regtest, got {self.BITCOIN_NETWORK!r}")
         if not (0 <= self.SWAP_FEE_RATE < 1):
             errors.append("SWAP_FEE_RATE must be in [0, 1)")
         if abs(self.SWAP_FEE_RATE * 10_000 - round(self.SWAP_FEE_RATE * 10_000)) > 1e-6:

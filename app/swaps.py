@@ -10,7 +10,7 @@ from app.fees import calculate_gross
 from app.halt import is_halted
 from app.lnd import LndError, LndUnavailable, lnd_client
 from app.models import Swap, SwapStatus
-from app.validator import validate_bitcoin_address
+from app.validator import ADDRESS_RULE, validate_bitcoin_address
 
 logger = logging.getLogger("ln2oc.swaps")
 
@@ -51,7 +51,8 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         raise SwapError("Too many pending swaps, try again later", status_code=503)
 
     if not validate_bitcoin_address(btc_address, settings.BITCOIN_NETWORK):
-        raise SwapError(f"Invalid Bitcoin address for network '{settings.BITCOIN_NETWORK}': {btc_address}")
+        raise SwapError(f"Invalid Bitcoin address for network '{settings.BITCOIN_NETWORK}' ({ADDRESS_RULE}): {btc_address}")
+    btc_address = btc_address.lower()  # bech32 is case-insensitive: store one canonical form
 
     if amount_msat % 1000 != 0:
         raise SwapError("Amount must be a whole number of satoshis.")

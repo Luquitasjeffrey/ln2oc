@@ -18,7 +18,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ln2oc")
 
-_LND_NETWORK = {"mainnet": "mainnet", "testnet": "testnet", "regtest": "regtest"}
+# BITCOIN_NETWORK -> what LND's GetInfo reports in chains[].network (lncfg.NormalizeNetwork:
+# testnet3 is reported as "testnet", testnet4 as "testnet4").
+_LND_NETWORK = {"mainnet": "mainnet", "testnet": "testnet", "testnet4": "testnet4", "regtest": "regtest"}
 
 
 def startup_checks() -> None:

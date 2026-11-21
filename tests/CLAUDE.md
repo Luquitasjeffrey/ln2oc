@@ -8,7 +8,7 @@ Son tests de integración contra una red **Polar** en regtest. Si Polar no está
 | User | `polar-n3-User` | `127.0.0.1:10002` (REST 8082) | el pagador (`Payer` en `conftest.py`) |
 | bitcoind | `polar-n3-backend1` | RPC `polaruser`/`polarpass` | minar, inspeccionar tx, direcciones de destino |
 
-Credenciales en `/home/lucas/.polar/networks/3/volumes/lnd/<Nodo>/`. Kross tiene canal hacia User y ~1,1 BTC on-chain; LND estima 25 sat/vB en regtest.
+Credenciales en `/home/lucas/.polar/networks/3/volumes/lnd/<Nodo>/`. **Cada corrida pasa liquidez de User a Kross**: si muchos tests fallan con "invoice still open" o pagos que no llegan a `ACCEPTED`, mirar `lncli --network regtest --lnddir /home/lnd/.lnd channelbalance` en `polar-n3-User`. Para rebalancear: User hace `addinvoice --amt 8000000` y Kross la paga con `payinvoice --force`. Antes, cancelar las hold invoices `ACCEPTED` que hayan quedado en Kross de tests abortados. Kross tiene canal hacia User y ~1,1 BTC on-chain; LND estima 25 sat/vB en regtest.
 
 ## Patrones
 
