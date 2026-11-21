@@ -6,9 +6,12 @@ file lock). Every state transition is a compare-and-set on the stored status, an
 every step is safe to re-run after a crash at any point.
 
 Flow of a swap:
-  1. Hold invoice ACCEPTED: the payment is held. Only the on-chain balance (and the
-     HTLC's CLTV margin) is checked. Nothing is funded or signed. Not enough -> cancel
-     the hold invoice right away and the payer keeps their sats.
+  1. Hold invoice ACCEPTED: the payment is held. While the on-chain wallet has any tx
+     in the mempool (incoming or outgoing) nothing is checked: the payment stays held
+     until every wallet tx confirms (only a CLTV margin running out refunds it). Then
+     only the on-chain balance (and the HTLC's CLTV margin) is checked. Nothing is
+     funded or signed. Not enough -> cancel the hold invoice right away and the payer
+     keeps their sats.
   2. Settle the hold invoice and wait until LND reports it SETTLED. Any unexpected
      answer -> MANUAL_REVIEW.
   3. Only with the invoice SETTLED: fund + sign the payout, verify it, and store the
@@ -88,6 +91,8 @@ class SwapWorker:
         self._held: set[int] = set()
         # Set by tick() when it looked up every PENDING invoice without being interrupted.
         self._poll_completed = False
+        # Last "payout blocked" message logged, so a long wait is not logged every retry.
+        self._last_blocked: Optional[str] = None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -250,8 +255,12 @@ class SwapWorker:
                 if swap.status == before:
                     raise FatalSwapError(swap.id, f"step for {before.value} made no progress")
         except (_Blocked, LndUnavailable) as e:
-            logger.warning("Swap %s blocked in %s: %s", swap.id, swap.status.value, e)
+            msg = f"Swap {swap.id} blocked in {swap.status.value}: {e}"
+            # Waiting for a block can last many fast retries: log each new reason once.
+            logger.log(logging.DEBUG if msg == self._last_blocked else logging.WARNING, msg)
+            self._last_blocked = msg
             return True
+        self._last_blocked = None
         if swap.status == SwapStatus.CANCELING:
             self._do_cancel(db, swap)
         return False
@@ -383,8 +392,9 @@ class SwapWorker:
     # ------------------------------------------------------------------ SETTLING
 
     def _do_settle(self, db: Session, swap: Swap) -> None:
-        """Invoice ACCEPTED: check the on-chain balance (nothing else), then settle and
-        wait until LND reports SETTLED. Re-runnable after a crash at any point."""
+        """Invoice ACCEPTED: wait until the wallet has no unconfirmed tx, check the on-chain
+        balance (nothing else), then settle and wait until LND reports SETTLED.
+        Re-runnable after a crash at any point."""
         invoice = self._lookup(swap)
         if invoice.state == InvoiceState.SETTLED:
             # We settled before but crashed before recording it.
@@ -399,6 +409,15 @@ class SwapWorker:
         if margin < settings.MIN_CLTV_MARGIN_BLOCKS:
             self._to_canceling(db, swap, f"HTLC CLTV margin {margin} < {settings.MIN_CLTV_MARGIN_BLOCKS} blocks")
             return
+
+        # With any wallet tx in the mempool (our previous payout, its change, a deposit,
+        # a channel tx) the balance and the coin selection are not settled yet: check
+        # nothing and cancel nothing, just keep the payment held and retry. Only the CLTV
+        # margin above can end the wait (refund) before the wallet is quiet again.
+        unconfirmed = self.lnd.unconfirmed_txids(self._block_height())
+        if unconfirmed:
+            raise _Blocked(f"waiting for {len(unconfirmed)} unconfirmed wallet tx(s) to confirm "
+                           f"({', '.join(t[:16] for t in unconfirmed[:3])}{'...' if len(unconfirmed) > 3 else ''})")
 
         problem, cap = self._payout_viability(swap)
         if problem:

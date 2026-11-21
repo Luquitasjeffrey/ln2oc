@@ -25,14 +25,14 @@ Casos de uso: auto-envío desde una wallet LN (Wallet of Satoshi, Phoenix…) a 
 
 ```
 PENDING ─(invoice ACCEPTED)─► SETTLING ─(invoice SETTLED)─► PAID ─(tx firmada y guardada)─► SIGNED ─(broadcast)─► BROADCASTED
-   │                             │ solo chequea saldo + margen CLTV
+   │                             │ espera mempool vacía, después chequea saldo + margen CLTV
    ▼                             ▼
 EXPIRED                      CANCELING ─► FAILED (hold invoice cancelada: el pagador no pierde nada)
 MANUAL_REVIEW: invariante roto → el proceso termina y no arranca mientras exista uno.
 ```
 
 1. `create_swap` (`app/swaps.py`): valida dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**), **no reserva saldo** (solo un fail-fast contra el saldo gastable) y emite la hold invoice.
-2. Invoice `ACCEPTED` → `SETTLING`: **solo se chequea** (`_payout_viability`): LND simula la tx real (`lnrpc.EstimateFee` con la dirección y `gross_sat`, coin selection sin leasear) → minería estimada a la tasa actual; tope = 2× eso (se guarda en `max_miner_fee_sat` antes del settle). Se cancela la hold invoice si gross − tope < dust, si el saldo gastable < gross + tope o si no hay estimación usable; también si no hay margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`). **No se fondea ni se firma nada.**
+2. Invoice `ACCEPTED` → `SETTLING`: si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), **no se chequea ni se cancela nada**: el pago queda retenido y se reintenta (`_Blocked`). Solo el margen de CLTV puede cortar la espera (reembolso). Con la wallet quieta, **solo se chequea** (`_payout_viability`): LND simula la tx real (`lnrpc.EstimateFee` con la dirección y `gross_sat`, coin selection sin leasear) → minería estimada a la tasa actual; tope = 2× eso (se guarda en `max_miner_fee_sat` antes del settle). Se cancela la hold invoice si gross − tope < dust, si el saldo gastable < gross + tope o si no hay estimación usable; también si no hay margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`). **No se fondea ni se firma nada.**
 3. Settle y esperar a que LND reporte `SETTLED` → `PAID`. Desde acá se le debe el payout al usuario: cualquier falla posterior va a `MANUAL_REVIEW` ("USER IS OWED"), nunca a un reembolso automático.
 4. `PAID` → `SIGNED`: tasa = la del momento, limitada para que el fee no pase el tope (`min(tasa, tope // vB)`; si la tasa no se puede estimar o supera `MAX_SAT_PER_VBYTE`, se paga al tope). `FundPsbt` pagando `gross_sat` al destino y `_deduct_fee` cobra el fee al usuario: destino = gross − min(fee, tope), cambio = Σinputs − gross (solo montos, mismo tamaño). Sin cambio → se re-fondea por el neto y la diferencia se loguea. Una suba de minería nunca manda a `MANUAL_REVIEW`: se paga hasta el tope. Después `FinalizePsbt`, verificación independiente (`app/tx.py`: destino, monto, inputs = UTXOs leaseados, payout + fee = gross, fee ≥ `MIN_SAT_PER_VBYTE` × vsize) y **raw tx + txid guardados en la DB antes del broadcast**, junto con `payout_sat`, `actual_fee_sat` y `fee_rate_sat_vb` (efectiva).
 5. `SIGNED` → `BROADCASTED`: publicar la tx guardada. Reintentar es idempotente.
@@ -40,6 +40,7 @@ MANUAL_REVIEW: invariante roto → el proceso termina y no arranca mientras exis
 Invariantes (ver `app/worker.py`):
 - Un único proceso (lock exclusivo de archivo) y un único hilo worker, que también detecta los pagos (polling síncrono, sin suscripciones); transiciones compare-and-set (`_transition`).
 - Como máximo **un payout en vuelo** (`SETTLING`/`PAID`/`SIGNED`) para que el chequeo de saldo del siguiente vea la wallet ya gastada.
+- El siguiente payout no se chequea ni se settlea hasta que **todas** las tx de la wallet estén confirmadas (decisión del usuario: conservador y lento; ~1 payout por bloque). Nunca se encadena sobre cambio sin confirmar.
 - Resultado ambiguo de LND (`LndUnavailable`: timeout, conexión cortada) nunca se toma como fracaso: se vuelve a consultar el estado. `LndError` = LND rechazó explícitamente.
 - TLS hacia LND siempre verificado (falla cerrado).
 
@@ -115,5 +116,6 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 **Para charlar**
 12. Seguimiento de confirmaciones (`BROADCASTED` es terminal; una tx trabada no se detecta).
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
+14. **Wallet con una tx que nunca confirma frena todos los payouts** (baja prioridad: al atacante le cuesta plata y no gana nada). Ataque: mandar una tx chica a nuestra dirección de cambio (visible en cualquier payout) y reemplazarla por RBF; btcwallet puede seguir mostrándola sin confirmar para siempre. Lo mismo pasa sin atacante si nuestro payout se traba por una suba de minería. Efecto: cada pago queda retenido ~16 h (margen CLTV) y después se reembolsa, los HTLC traban canales y siguen entrando órdenes. No se pierden fondos. Opciones: frenar solo por txs que gastan UTXOs propios (`previous_outpoints[].is_our_output`; los depósitos sin confirmar no afectan con `ONCHAIN_MIN_CONFS=1`), 503 en `create_swap` cuando el worker lleva X min frenado, tope de espera menor que el CLTV, alerta (6). Remedio manual: `lncli wallet removetx`.
 
 Orden propuesto: 4, 5 → 6, 11 → 7, 8, 9. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)

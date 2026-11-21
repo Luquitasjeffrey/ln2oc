@@ -44,7 +44,7 @@ export function mountFlow(root) {
         { k: "pay",     a: 11,   b: 16.5, step: "Paso 2",        title: "El pago queda retenido",
           cap: "Pagás. El HTLC llega y la invoice pasa a ACCEPTED: la plata está retenida, nadie la cobró todavía. El worker lo ve en su próxima consulta de invoices pendientes (LookupInvoice)." },
         { k: "check",   a: 16.5, b: 20,   step: "Paso 3",        title: "Chequear el saldo",
-          cap: "Con la invoice en ACCEPTED, el worker le pide a LND que simule tu tx, sin reservar nada: alcanza el saldo y la minería no deja el payout en dust. No se firma nada todavía." },
+          cap: "Con la invoice en ACCEPTED, si la wallet on-chain tiene alguna tx sin confirmar el worker espera, sin chequear ni cancelar nada. Después le pide a LND que simule tu tx, sin reservar nada: alcanza el saldo y la minería no deja el payout en dust. No se firma nada todavía." },
         { k: "settle",  a: 20,   b: 24.5, step: "Paso 4",        title: "Cobrar con el preimage",
           cap: "El nodo revela el preimage, cobra y espera a que LND confirme SETTLED. Recién ahora la plata Lightning es del operador." },
         { k: "fund",    a: 24.5, b: 30.5, step: "Paso 5",        title: "Firmar y guardar",

@@ -131,7 +131,7 @@ export default function Usuario() {
               <code>
                 ACCEPTED
               </code>
-              . En tu wallet el pago aparece en curso. El servicio revisa los pagos pendientes cada {poll}, así que puede tardar hasta eso en verlo. Entonces el nodo solo verifica que tenga sats on-chain para pagarte. No firma nada todavía.
+              . En tu wallet el pago aparece en curso. El servicio revisa los pagos pendientes cada {poll}, así que puede tardar hasta eso en verlo. Si la wallet on-chain del nodo tiene alguna tx sin confirmar (por ejemplo, el payout anterior), tu pago espera retenido hasta que confirme: no se cancela. Entonces el nodo solo verifica que tenga sats on-chain para pagarte. No firma nada todavía.
             </p>
             {" "}
             <span className="wallet pending">
