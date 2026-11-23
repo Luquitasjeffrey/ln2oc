@@ -144,12 +144,13 @@ class LndClient:
         resp = self._call(wallet.EstimateFee, wk.EstimateFeeRequest(conf_target=conf_target), "EstimateFee")
         return int(resp.sat_per_kw)
 
-    def estimate_tx_fee(self, addr: str, amount_sat: int, conf_target: int, min_confs: int) -> ln.EstimateFeeResponse:
-        """Dry run of the payout tx: LND does the real coin selection over the current
-        wallet and returns its fee (at LND's own rate for conf_target). Nothing is leased."""
+    def estimate_tx_fee(self, outputs: dict[str, int], conf_target: int, min_confs: int) -> ln.EstimateFeeResponse:
+        """Dry run of the payout tx (address -> sat, one output each): LND does the real
+        coin selection over the current wallet and returns its fee (at LND's own rate for
+        conf_target). Nothing is leased."""
         lnd, _, _ = self._stubs()
         req = ln.EstimateFeeRequest(
-            AddrToAmount={addr: amount_sat},
+            AddrToAmount=dict(outputs),
             target_conf=conf_target,
             min_confs=min_confs,
             spend_unconfirmed=(min_confs == 0),
@@ -192,18 +193,17 @@ class LndClient:
 
     def fund_psbt(
         self,
-        addr: str,
-        amount_sat: int,
+        outputs: dict[str, int],
         sat_per_vbyte: int,
         lock_id: bytes,
         lock_expiration_seconds: int,
         min_confs: int,
     ) -> wk.FundPsbtResponse:
-        """Selects wallet UTXOs, adds change and LEASES the inputs under lock_id.
-        Nothing is signed or broadcast."""
+        """Pays `outputs` (address -> sat, one output each): selects wallet UTXOs, adds
+        change and LEASES the inputs under lock_id. Nothing is signed or broadcast."""
         _, _, wallet = self._stubs()
         req = wk.FundPsbtRequest(
-            raw=wk.TxTemplate(outputs={addr: amount_sat}),
+            raw=wk.TxTemplate(outputs=dict(outputs)),
             sat_per_vbyte=sat_per_vbyte,
             min_confs=min_confs,
             spend_unconfirmed=(min_confs == 0),

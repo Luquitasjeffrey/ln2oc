@@ -50,7 +50,7 @@ def assert_paid_exactly_once(swap, dest: str):
     assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.SETTLED
     # Leases are kept on the (now spent) inputs until they expire; they must be exactly ours.
     inputs = {(i.txid, i.vout) for i in parse_tx(bytes.fromhex(swap.raw_tx)).inputs}
-    leased = {(l.outpoint.txid_str, l.outpoint.output_index) for l in leases_for(swap.lock_id)}
+    leased = {(l.outpoint.txid_str, l.outpoint.output_index) for l in leases_for(swap.batch_id)}
     assert leased <= inputs
 
 
@@ -338,9 +338,9 @@ def test_polling_picks_up_new_swaps_and_expiry(env, payer):
     mine_blocks(1)
 
 
-def test_concurrent_payments_are_paid_one_after_another(env, payer):
-    """Three payments held at once: one poll sees them all; the payout slot takes one and
-    the others are retried at the fast pace (the next full poll is 5 minutes away)."""
+def test_concurrent_payments_are_paid_together(env, payer):
+    """Three payments held at once: one poll sees them all and, the wallet being quiet,
+    one batch pays them in a single tx (more in tests/test_batch_payouts.py)."""
     swaps = []
     for _ in range(3):
         dest = new_dest_address()
@@ -351,20 +351,14 @@ def test_concurrent_payments_are_paid_one_after_another(env, payer):
         _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
     worker = _polling_worker(env, poll_interval=300)
     worker.start()
-    for i, ((swap_id, dest, _), payment) in enumerate(zip(swaps, payments)):
-        swap = wait_for_status(env["Session"], swap_id, _DONE, timeout=60)
-        assert swap.status == SwapStatus.BROADCASTED, swap.error
+    done = [wait_for_status(env["Session"], swap_id, _DONE, timeout=60) for swap_id, _, _ in swaps]
+    for swap, (_, dest, _), payment in zip(done, swaps, payments):
         assert payment.result(timeout=60).payment_error == "", swap.error
         assert_paid_exactly_once(swap, dest)
-        # The next held payments wait for this payout to confirm: nothing checked, nothing refunded.
-        time.sleep(1.5)
-        for later_id, _, _ in swaps[i + 1:]:
-            later = get_swap(env["Session"], later_id)
-            assert later.status in (SwapStatus.PENDING, SwapStatus.SETTLING), later.status
-            assert lnd_client.lookup_invoice(bytes.fromhex(later.payment_hash)).state == InvoiceState.ACCEPTED
-        mine_blocks(1)
+    assert len({s.txid for s in done}) == 1 and len({s.batch_id for s in done}) == 1
     assert not env["fatal"].reasons, env["fatal"].reasons
     worker.stop()
+    mine_blocks(1)
 
 
 def test_unconfirmed_deposit_holds_payment_until_it_confirms(env, payer, monkeypatch):
@@ -384,7 +378,7 @@ def test_unconfirmed_deposit_holds_payment_until_it_confirms(env, payer, monkeyp
     for _ in range(5):
         assert env["worker"].run_tick_guarded() is True  # blocked: retry soon
     swap = get_swap(env["Session"], swap_id)
-    assert swap.status == SwapStatus.SETTLING and swap.max_miner_fee_sat is None, swap.status
+    assert swap.status == SwapStatus.PENDING and swap.batch_id is None and swap.max_miner_fee_sat is None, swap.status
     assert calls == []
     assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.ACCEPTED
     assert not payment.done()
@@ -447,7 +441,7 @@ def test_no_onchain_funds_at_payment_time_refunds_payer(env, payer):
     assert swap.raw_tx is None
     assert payment.result(timeout=60).payment_error != ""  # payer got their money back
     assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.CANCELED
-    assert leases_for(swap.lock_id) == []
+    assert leases_for(swap.batch_id) == []
 
 
 def test_nothing_on_chain_happens_before_the_invoice_is_settled(env, payer, monkeypatch):
@@ -530,7 +524,7 @@ def test_payout_that_would_be_dust_after_mining_is_refunded_before_settle(env, p
     assert not env["fatal"].reasons
     assert swap.status == SwapStatus.FAILED and "below dust" in swap.error, swap.error
     assert payment.result(timeout=60).payment_error != ""
-    assert swap.raw_tx is None and leases_for(swap.lock_id) == []
+    assert swap.raw_tx is None and leases_for(swap.batch_id) == []
 
 
 def _spike_after_settle(monkeypatch, rate_after: int, hide_size: bool):
@@ -550,9 +544,9 @@ def _spike_after_settle(monkeypatch, rate_after: int, hide_size: bool):
         real_size = worker_mod.SwapWorker._payout_vbytes
         size_calls = {"n": 0}
 
-        def size(self, swap):
+        def size(self, outputs):
             size_calls["n"] += 1
-            return real_size(self, swap) if size_calls["n"] == 1 else None
+            return real_size(self, outputs) if size_calls["n"] == 1 else None
 
         monkeypatch.setattr(worker_mod.SwapWorker, "_payout_vbytes", size)
 

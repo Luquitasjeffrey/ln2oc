@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     FEE_TARGET_CONF: int = 2
     # Confirmations required on wallet UTXOs used to fund payouts (0 = allow unconfirmed change).
     ONCHAIN_MIN_CONFS: int = 1
+    # Held payments waiting while the wallet has unconfirmed txs are paid together, in one
+    # tx with one output each, once it is quiet again: at most this many per tx (1 = one
+    # payout per tx). Bounded so an attacker cannot grow it.
+    MAX_PAYOUT_BATCH: int = 10
     # How long LND keeps our UTXOs leased while a payout is in flight.
     UTXO_LEASE_SECONDS: int = 86_400
 
@@ -102,6 +106,8 @@ class Settings(BaseSettings):
             errors.append("INVOICE_EXPIRY_SECONDS must exceed 2 x INVOICE_POLL_INTERVAL_SECONDS")
         if self.MAX_PENDING_SWAPS < 1:
             errors.append("MAX_PENDING_SWAPS must be >= 1")
+        if not (1 <= self.MAX_PAYOUT_BATCH <= 50):
+            errors.append("Require 1 <= MAX_PAYOUT_BATCH <= 50")
         if self.UTXO_LEASE_SECONDS < 600:
             errors.append("UTXO_LEASE_SECONDS must be >= 600")
         if self.FRONTEND_URL and not self.FRONTEND_URL.startswith(("https://", "http://")):

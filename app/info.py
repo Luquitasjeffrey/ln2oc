@@ -14,7 +14,7 @@ from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.config import APP_VERSION, settings
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db import SessionLocal
 from app.fees import current_fee_rate_sat_per_vbyte
@@ -63,14 +63,18 @@ def _fee_rate_sat_vb() -> int | None:
 
 
 def _last_payout_vbytes() -> int | None:
-    """Size of the most recent payout tx this instance signed: a real example of what a
-    payout weighs here (it depends on the operator's UTXOs and the destination type)."""
+    """Per-user share of the most recent payout tx this instance signed: a real example
+    of what a payout weighs here (it depends on the operator's UTXOs, the destination type
+    and how many swaps the tx paid; the miner fee is split equally among them)."""
     try:
         with SessionLocal() as db:
-            raw = db.execute(
-                select(Swap.raw_tx).where(Swap.raw_tx.is_not(None)).order_by(Swap.id.desc()).limit(1)
-            ).scalar_one_or_none()
-        return parse_tx(bytes.fromhex(raw)).vsize if raw else None
+            last = db.execute(
+                select(Swap.raw_tx, Swap.txid).where(Swap.raw_tx.is_not(None)).order_by(Swap.id.desc()).limit(1)
+            ).first()
+            if not last:
+                return None
+            shared_by = db.execute(select(func.count()).where(Swap.txid == last.txid)).scalar_one()
+        return -(-parse_tx(bytes.fromhex(last.raw_tx)).vsize // max(1, shared_by))
     except Exception as e:  # informational only
         logger.warning("Cannot read last payout size for /api/info: %s", e)
         return None
@@ -97,7 +101,7 @@ def info():
         "max_swap_sat": settings.MAX_SWAP_SAT,
         "min_payout_sat": settings.MIN_PAYOUT_SAT,
         # The miner fee is set when the payout is signed: real tx, rate of that moment.
-        # These are only the current rate and the size of the last real payout, as an example.
+        # These are only the current rate and the per-user size of the last real payout, as an example.
         "fee_rate_sat_vb": rate,
         "last_payout_vbytes": _last_payout_vbytes(),
         "invoice_poll_interval_seconds": settings.INVOICE_POLL_INTERVAL_SECONDS,

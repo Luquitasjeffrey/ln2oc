@@ -156,7 +156,7 @@ def insert_swap(Session, amount_sat: int, gross_sat: int, address: str) -> tuple
     with Session() as db:
         swap = Swap(
             payment_hash=payment_hash.hex(), preimage=preimage.hex(), btc_address=address,
-            amount_sat=amount_sat, gross_sat=gross_sat, invoice=resp.payment_request, lock_id=os.urandom(32).hex(), status=SwapStatus.PENDING,
+            amount_sat=amount_sat, gross_sat=gross_sat, invoice=resp.payment_request, status=SwapStatus.PENDING,
         )
         db.add(swap)
         db.commit()
@@ -183,8 +183,11 @@ def tick_until(env, swap_id: int, statuses, max_ticks: int = 60) -> Swap:
     return get_swap(env["Session"], swap_id)
 
 
-def leases_for(lock_id_hex: str) -> list:
-    lock_id = bytes.fromhex(lock_id_hex)
+def leases_for(batch_id_hex: str | None) -> list:
+    """UTXOs leased for a payout batch (its batch_id is the lease id)."""
+    if not batch_id_hex:
+        return []
+    lock_id = bytes.fromhex(batch_id_hex)
     return [l for l in lnd_client.list_leases() if l.id == lock_id]
 
 

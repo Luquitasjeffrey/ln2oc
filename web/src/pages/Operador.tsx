@@ -521,7 +521,7 @@ export default function Operador() {
               Varios medianos, no uno gigante
             </h3>
             <p>
-              Se paga un swap a la vez y por defecto solo se gastan UTXOs confirmados. Con un único UTXO, el cambio queda sin confirmar y pagás más o menos un swap por bloque. Con muchos UTXOs chicos, la tx pesa más y los swaps se cancelan por fee.
+              Se paga un lote a la vez (todos los pagos retenidos juntos, en una tx, hasta MAX_PAYOUT_BATCH) y por defecto solo se gastan UTXOs confirmados. Con un único UTXO, el cambio queda sin confirmar y pagás más o menos un lote por bloque. Con muchos UTXOs chicos, la tx pesa más y los swaps se cancelan por fee.
             </p>
           </div>
         </div>

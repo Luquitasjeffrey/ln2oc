@@ -71,7 +71,6 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
 
     preimage_bytes = os.urandom(32)
     payment_hash_bytes = hashlib.sha256(preimage_bytes).digest()
-    lock_id = os.urandom(32)
 
     # Fail fast if we obviously could not pay this right now. Not a reservation.
     try:
@@ -111,7 +110,6 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         amount_sat=amount_sat,
         gross_sat=gross_sat,
         invoice=invoice_str,
-        lock_id=lock_id.hex(),
         status=SwapStatus.PENDING,
     )
     db.add(swap)
