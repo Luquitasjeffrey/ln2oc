@@ -87,7 +87,7 @@ export default function Arquitectura() {
                 1 hilo · máquina de estados
               </text>
               <text x="585" y="168" textAnchor="middle" className="m mut">
-                1 payout en vuelo a la vez
+                1 lote de payouts en vuelo
               </text>
               <text x="585" y="186" textAnchor="middle" className="m mut">
                 único que mueve plata
@@ -107,7 +107,7 @@ export default function Arquitectura() {
                 SQLite · models.py
               </text>
               <text x="465" y="479" textAnchor="middle" className="m mut">
-                swaps: estado, preimage, lock_id, raw_tx, txid
+                swaps: estado, preimage, batch_id, raw_tx, txid
               </text>
               <path d="M230 240 C 206 280, 206 410, 262 436" className="e" markerEnd="url(#a)" />
               <text x="196" y="330" textAnchor="end" className="m mut">
@@ -346,11 +346,11 @@ export default function Arquitectura() {
             <code>
               ACCEPTED
             </code>
-            {" "}y lo único que se hace es esperar a que la wallet on-chain no tenga ninguna tx sin confirmar y mirar el saldo, con una simulación de la tx en LND que no reserva nada: si no alcanza, o si la minería dejaría el payout en dust, se cancela y el pagador no pierde nada. A la derecha, la invoice ya está{" "}
+            {" "}y lo único que se hace es esperar a que la wallet on-chain no tenga ninguna tx sin confirmar, juntar en un lote los pagos retenidos y mirar el saldo, con una simulación de la tx en LND que no reserva nada: el pago que no entra, o cuyo payout la minería dejaría en dust, se cancela y ese pagador no pierde nada. A la derecha, la invoice ya está{" "}
             <code>
               SETTLED
             </code>
-            : recién ahí se firma la tx, se guarda en la DB y se publica. Publicar se puede reintentar sin riesgo de pagar dos veces, y cualquier falla en ese tramo frena el servicio.
+            : recién ahí se firma una sola tx para todo el lote, se guarda en la DB y se publica. Publicar se puede reintentar sin riesgo de pagar dos veces, y cualquier falla en ese tramo frena el servicio.
           </figcaption>
         </figure>
       </section>
@@ -447,7 +447,7 @@ export default function Arquitectura() {
                   app/worker.py
                 </td>
                 <td>
-                  La máquina de estados. Único hilo que mueve plata, con un payout en vuelo a la vez y transiciones compare-and-set. También detecta los pagos: cada INVOICE_POLL_INTERVAL_SECONDS consulta cada swap PENDING con LookupInvoice, de a uno.
+                  La máquina de estados. Único hilo que mueve plata, con un lote de payouts en vuelo a la vez (una tx, un output por swap) y transiciones compare-and-set. También detecta los pagos: cada INVOICE_POLL_INTERVAL_SECONDS consulta cada swap PENDING con LookupInvoice, de a uno.
                 </td>
               </tr>
               <tr>

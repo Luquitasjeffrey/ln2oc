@@ -60,7 +60,7 @@ export function SwapLedger({ amount = 100_000 }: { amount?: number }) {
       </div>
       <p style={{ color: "var(--muted)", fontSize: "var(--step--1)" }}>
         {x.live ? `Tasa de ahora: ${fmt(x.rate)} sat/vB, según el nodo de esta instancia. ` : "Ejemplo con 1 sat/vB. "}
-        {x.measured ? `${x.vbytes} vB es lo que pesó el último payout. ` : ""}
+        {x.measured ? `${x.vbytes} vB es tu parte de lo que pesó el último payout (la tx se comparte con los demás pagos del lote). ` : ""}
         La minería real se calcula al firmar tu tx, con su tamaño y la tasa de ese momento (con tope de 2× la estimada cuando llega tu pago), y sale de tu pago. El servicio se queda solo con la comisión.
       </p>
     </>

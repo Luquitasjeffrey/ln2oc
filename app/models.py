@@ -24,6 +24,9 @@ class SwapStatus(str, enum.Enum):
            ▼                              ▼
         EXPIRED (never paid)           CANCELING ──► FAILED (hold invoice canceled: payer keeps their sats)
 
+        Payouts go in batches: the held payments taken together share a batch_id, are
+        settled one by one and paid by ONE tx (one output each). Only one batch in flight.
+
         From PAID on, the operator holds the payer's money: failures there are never
         refunded automatically, they go to MANUAL_REVIEW.
 
@@ -56,14 +59,18 @@ class Swap(Base):
     gross_sat = Column(BigInteger, nullable=False)  # amount - service fee: payout + miner fee come out of it
     max_miner_fee_sat = Column(BigInteger, nullable=True)  # set before settling: cap on the payout's miner fee
     payout_sat = Column(BigInteger, nullable=True)  # set when signing: gross_sat - actual_fee_sat
-    fee_rate_sat_vb = Column(Integer, nullable=True)  # rate estimated when signing the payout
+    fee_rate_sat_vb = Column(Integer, nullable=True)  # effective rate of the payout tx
     invoice = Column(Text, nullable=False)
-    lock_id = Column(String(64), nullable=False)  # hex, LND UTXO lease id for this swap
+    # Payout batch: set when the swap leaves PENDING (held payment taken for a payout).
+    # Every swap in flight shares one batch_id, which is also the LND UTXO lease id of the
+    # batched payout tx (one tx paying every swap of the batch).
+    batch_id = Column(String(64), nullable=True, index=True)
 
-    # Payout transaction (set in PAID -> SIGNED, never changed afterwards)
+    # Payout transaction (set in PAID -> SIGNED, never changed afterwards). Shared by every
+    # swap of the batch: the same tx pays all of them, one output each.
     raw_tx = Column(Text, nullable=True)  # hex
-    txid = Column(String(64), nullable=True, unique=True)
-    actual_fee_sat = Column(BigInteger, nullable=True)
+    txid = Column(String(64), nullable=True, index=True)
+    actual_fee_sat = Column(BigInteger, nullable=True)  # this swap's share of the miner fee
 
     status = Column(Enum(SwapStatus), default=SwapStatus.PENDING, nullable=False, index=True)
     error = Column(Text, nullable=True)
