@@ -29,7 +29,7 @@ Config en `deploy/lnd/mainnet.conf`:
 - `bitcoin.node=neutrino` y `fee.url`: con neutrino LND no tiene mempool, y la tasa de minería de los payouts (`EstimateFee`) sale de esa URL externa. Por eso `.env.prod` baja `MAX_SAT_PER_VBYTE` a 100.
 - `tlsextradomain=lnd`: ln2oc verifica el TLS contra el nombre `lnd`.
 - `wallet-unlock-password-file=/lnd/wallet_password`: se desbloquea solo en cada arranque. La contraseña queda en texto plano junto a la wallet (aceptado para el piloto).
-- `wallet-unlock-allow-create`: sin wallet, LND arranca y espera.
+- `wallet-unlock-allow-create`: sin wallet, LND arranca y espera. Pero el archivo de contraseña tiene que existir antes de arrancar: por eso LND lo levantan `create-wallet.sh` / `recover-wallet.sh`, después de escribirlo.
 - Sin REST, sin puertos publicados. Los canales tienen que ser **públicos**: las hold invoices salen sin route hints.
 
 ## Primera vez
@@ -39,8 +39,7 @@ git clone git@github-freelance:Luquitasjeffrey/ln2oc.git /home/lucas/ln2oc/prod
 cd /home/lucas/ln2oc/prod
 cp .env.prod .env                  # y revisar lo marcado REVISAR / __COMPLETAR__
 scripts/lnd/init-dirs.sh           # crea data/lnd y data/ln2oc con tu usuario (antes del primer up)
-docker compose up -d lnd           # LND sin wallet, esperando
-scripts/lnd/create-wallet.sh       # o recover-wallet.sh: ver abajo
+scripts/lnd/create-wallet.sh       # o recover-wallet.sh: escribe la contraseña y levanta LND
 scripts/lnd/lncli.sh getinfo       # esperar synced_to_chain: true (neutrino: decenas de minutos)
 ```
 
@@ -72,7 +71,6 @@ Los scripts nunca pisan una wallet existente: si `wallet.db` ya está, frenan.
 ```bash
 git clone ... /home/lucas/ln2oc/prod && cd /home/lucas/ln2oc/prod
 cp .env.prod .env && scripts/lnd/init-dirs.sh
-docker compose up -d lnd
 scripts/lnd/recover-wallet.sh
 scripts/lnd/restore-channels.sh /ruta/channel.backup     # si había canales
 # copiar la ln2oc.db del backup a data/ln2oc/ antes de levantar ln2oc

@@ -3,7 +3,7 @@
 # Recovers the ON-CHAIN funds. Channel funds come back with restore-channels.sh and the
 # SCB (channel.backup): that force-closes every channel.
 #
-# Needs an LND without wallet: on a fresh machine, init-dirs.sh + `docker compose up -d lnd`.
+# Needs no wallet in LND_DIR: on a fresh machine, init-dirs.sh first. Starts LND itself.
 source "$(dirname "$0")/common.sh"
 
 preflight_new_wallet
@@ -17,6 +17,7 @@ MSG
 ask_password
 write_password_file
 unset WALLET_PASSWORD
+start_lnd_without_wallet
 
 cat <<'MSG'
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Creates a NEW LND wallet (new seed). For an existing seed: recover-wallet.sh.
 #
-# 1. Asks for the wallet password and saves it in $LND_DIR/wallet_password (auto unlock).
+# 1. Asks for the wallet password and saves it in $LND_DIR/wallet_password (auto unlock),
+#    then starts LND (it refuses to start without that file).
 # 2. Runs `lncli create`: type THE SAME password, answer "n" (new seed) and, if you want,
 #    a seed passphrase (aezeed). Without that passphrase the seed alone can't recover the wallet.
 # 3. Write the 24 words on paper. They are shown only once, only in this terminal.
@@ -18,6 +19,7 @@ MSG
 ask_password
 write_password_file
 unset WALLET_PASSWORD
+start_lnd_without_wallet
 
 cat <<'MSG'
 

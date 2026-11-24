@@ -74,10 +74,16 @@ write_password_file() {
     mv "$tmp" "$PASSWORD_FILE"
 }
 
-# preflight_new_wallet: LND up, no wallet yet. Never overwrites an existing wallet.
+# preflight_new_wallet: no wallet yet. Never overwrites an existing wallet.
 preflight_new_wallet() {
     [[ ! -e "$WALLET_DB" ]] || die "ya existe una wallet en $WALLET_DB. No piso nada: si de verdad querés empezar de cero, movela vos a mano (con LND parado)."
-    lnd_running || die "el contenedor lnd no está corriendo: docker compose up -d lnd"
+    [[ -d "$LND_DIR" ]] || die "no existe $LND_DIR: corré scripts/lnd/init-dirs.sh"
+}
+
+# start_lnd_without_wallet: LND refuses to start until the password file exists, so it is
+# (re)started here, after write_password_file, and must come up waiting for a wallet.
+start_lnd_without_wallet() {
+    docker compose up -d --force-recreate lnd >/dev/null
     local s
     s="$(wait_state NON_EXISTING LOCKED UNLOCKED RPC_ACTIVE SERVER_ACTIVE)" || die "LND no responde (estado: $s). Mirá: docker compose logs --tail 50 lnd"
     [[ "$s" == "NON_EXISTING" ]] || die "LND dice que ya hay una wallet (estado: $s)"
