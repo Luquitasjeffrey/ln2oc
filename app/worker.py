@@ -227,7 +227,10 @@ class SwapWorker:
             if state != InvoiceState.ACCEPTED:
                 raise FatalSwapError(swap.id, f"invoice {InvoiceState.Name(state)} while swap INVOICE_HOLD")
 
-        spendable = self._spendable_sat()
+        try:
+            spendable = self._spendable_sat()
+        except LndError as e:
+            raise FatalSwapError([s.id for s in held], f"cannot read the on-chain balance: {e}")
         taken: list[Swap] = []
         total = 0
         for i, swap in enumerate(held):
@@ -243,8 +246,11 @@ class SwapWorker:
                 total += swap.gross_sat
 
         while taken:
-            est = self.lnd.estimate_tx_fee({s.btc_address: s.gross_sat for s in taken},
-                                           settings.FEE_TARGET_CONF, settings.ONCHAIN_MIN_CONFS)
+            try:  # e.g. "insufficient funds": the gross fits the balance, gross + miner fee does not
+                est = self.lnd.estimate_tx_fee({s.btc_address: s.gross_sat for s in taken},
+                                               settings.FEE_TARGET_CONF, settings.ONCHAIN_MIN_CONFS)
+            except LndError as e:
+                raise FatalSwapError([s.id for s in taken], f"LND cannot estimate the payout tx: {e}")
             if est.fee_sat <= 0 or est.sat_per_vbyte <= 0:
                 raise FatalSwapError([s.id for s in taken], f"unusable fee estimate from LND: {est}")
             if est.sat_per_vbyte > settings.MAX_SAT_PER_VBYTE:
@@ -271,7 +277,7 @@ class SwapWorker:
                 if self._invoice_state(swap) != InvoiceState.SETTLED:
                     raise RuntimeError(f"swap {swap.id}: invoice not SETTLED right after the settle")
             payouts = {s.btc_address: s.gross_sat - share for s in taken}
-            funded = self.lnd.fund_psbt(outputs=payouts, sat_per_vbyte=est.sat_per_vbyte, lock_id=os.urandom(32),
+            funded = self.lnd.fund_psbt(outputs=payouts, conf_target=settings.FEE_TARGET_CONF, lock_id=os.urandom(32),
                                         lock_expiration_seconds=_LEASE_SECONDS,
                                         min_confs=settings.ONCHAIN_MIN_CONFS)
             raw = bytes(self.lnd.finalize_psbt(funded.funded_psbt).raw_final_tx)

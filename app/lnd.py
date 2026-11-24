@@ -193,17 +193,20 @@ class LndClient:
     def fund_psbt(
         self,
         outputs: dict[str, int],
-        sat_per_vbyte: int,
+        conf_target: int,
         lock_id: bytes,
         lock_expiration_seconds: int,
         min_confs: int,
     ) -> wk.FundPsbtResponse:
         """Pays `outputs` (address -> sat, one output each): selects wallet UTXOs, adds
-        change and LEASES the inputs under lock_id. Nothing is signed or broadcast."""
+        change and LEASES the inputs under lock_id. Nothing is signed or broadcast.
+        The fee rate is LND's own estimate for conf_target, in sat/kw: the same one
+        EstimateFee used, without truncating it to whole sat/vB (that could sign below
+        the mempool minimum and get the publish rejected after the settle)."""
         _, _, wallet = self._stubs()
         req = wk.FundPsbtRequest(
             raw=wk.TxTemplate(outputs=dict(outputs)),
-            sat_per_vbyte=sat_per_vbyte,
+            target_conf=conf_target,
             min_confs=min_confs,
             spend_unconfirmed=(min_confs == 0),
             custom_lock_id=lock_id,

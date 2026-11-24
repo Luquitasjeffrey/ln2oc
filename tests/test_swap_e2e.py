@@ -505,6 +505,19 @@ def test_invoice_settled_outside_flow_is_fatal(env, payer):
     assert "MANUAL_REVIEW" in env["fatal"].reasons[-1]
 
 
+def test_lnd_rejecting_the_fee_estimate_is_manual_review_before_settling(env, payer, monkeypatch):
+    """The gross fits the balance but gross + miner fee does not: LND's EstimateFee says
+    "insufficient funds". MANUAL_REVIEW (not a restart loop), nothing settled."""
+    monkeypatch.setattr(SwapWorker, "_spendable_sat", lambda self: 10**15)
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, gross_sat=10**14, address=new_dest_address())
+    payment = payer.pay(invoice)
+    swap = tick_until(env, swap_id, _DONE)
+    assert swap.status == SwapStatus.MANUAL_REVIEW and "cannot estimate" in swap.error, swap.error
+    assert lnd_client.lookup_invoice(bytes.fromhex(swap.payment_hash)).state == InvoiceState.ACCEPTED
+    lnd_client.cancel_invoice(bytes.fromhex(swap.payment_hash))  # the manual fix: refund the payer
+    assert payment.result(timeout=60).payment_error != ""
+
+
 class _ProcessDied(BaseException):
     """Escapes run_tick_guarded like a kill -9 would: nothing after it runs."""
 
