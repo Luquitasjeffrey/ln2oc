@@ -67,10 +67,11 @@ Todo lo que no es una regla de negocio (la invoice se settleó por fuera del flu
 
 ## ⚙️ Configuración (`.env`)
 
-Copia el archivo de ejemplo:
+Copia la muestra que corresponda:
 
 ```bash
-cp .env.example .env
+cp .env.dev .env     # desarrollo: regtest con Polar
+cp .env.prod .env    # producción: mainnet con el LND del compose (ver docs/prod.md)
 ```
 
 Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
@@ -137,7 +138,9 @@ El servidor quedará escuchando en `http://localhost:8000`. Al iniciar:
 
 ## 🐳 Opción 2: Correr con Docker Compose
 
-Docker Compose genera los stubs gRPC en el build, monta la base SQLite en un volumen nombrado (`ln2oc_data`) y las credenciales de LND en modo sólo lectura (`ro`). El contenedor corre como usuario no-root con uid `APP_UID` (por defecto `1000`), que debe poder leer el macaroon. Por defecto se conecta a `host.docker.internal:10001` (`DOCKER_LND_GRPC_HOST`).
+Docker Compose genera los stubs gRPC en el build, monta la base SQLite en un volumen nombrado (`ln2oc_data`) y las credenciales de LND en modo sólo lectura (`ro`). El contenedor corre como usuario no-root con uid `APP_UID` (por defecto `1000`), que debe poder leer el macaroon. Por defecto se conecta a `host.docker.internal:10001` (`DOCKER_LND_GRPC_HOST`). Todos los parámetros salen de `.env` (`env_file`); `LND_MACAROON_PATH` y `LND_TLS_CERT_PATH` son rutas del host que se montan en el contenedor, y si no existen el contenedor no arranca.
+
+En producción, `COMPOSE_PROFILES=lnd` suma el servicio `lnd` (LND v0.20 en neutrino, sin puertos publicados) y los scripts de `scripts/lnd/` crean, recuperan y respaldan la wallet: ver [`docs/prod.md`](docs/prod.md).
 
 > Ante un `MANUAL_REVIEW` el contenedor entra en un loop de reinicios que se niegan a arrancar. Es intencional: el servicio queda caído y visible hasta que alguien lo resuelva.
 

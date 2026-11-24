@@ -79,6 +79,10 @@ Invariantes (ver `app/worker.py`):
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
 | `scripts/lnaddr_pay.py` | Cliente de prueba: resuelve y valida una Lightning Address como una wallet (LUD-16/06/01) y la paga desde un LND propio |
 | `docs/testnet4.md` | Cómo levantar y probar una instancia en testnet4 |
+| `docs/prod.md` | Producción: checkout en `/home/lucas/ln2oc/prod/`, datos en `prod/data/` (ignorado), servicio `lnd` del compose |
+| `deploy/lnd/mainnet.conf` | LND de prod: mainnet, neutrino, `fee.url`, `tlsextradomain=lnd`, desbloqueo con `wallet_password`, sin REST ni puertos publicados |
+| `scripts/lnd/` | Wallet de prod: `init-dirs`, `create-wallet`, `recover-wallet` (24 palabras + passphrase), `backup-scb`, `restore-channels`, `lncli`. Nunca pisan una wallet existente |
+| `.env.dev`, `.env.prod` | Muestras de `.env` (regtest/Polar y mainnet). El compose lee `.env` entero (`env_file`); `COMPOSE_PROFILES=lnd` suma el LND |
 
 ## Correr y testear
 
@@ -86,7 +90,7 @@ Invariantes (ver `app/worker.py`):
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 PYTHON=.venv/bin/python scripts/gen_protos.sh      # genera app/lnrpc/
 .venv/bin/python -m pytest tests -q -p no:cacheprovider   # ~15 s, necesita Polar corriendo (ver tests/CLAUDE.md)
-docker compose up -d --build                        # servicios "ln2oc" (API, :8000) y "web" (sitio, :8080)
+cp .env.dev .env && docker compose up -d --build   # servicios "ln2oc" (API, :8000) y "web" (sitio, :8080); prod: docs/prod.md
 cd web && npm ci && npm test && VITE_API_URL=http://127.0.0.1:8000 npm run dev   # sitio en dev (ver web/CLAUDE.md)
 ```
 
@@ -118,7 +122,7 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 9. Prueba en testnet4 con wallets reales. Preparada: `BITCOIN_NETWORK=testnet4`, guía en `docs/testnet4.md`, `.env.testnet4.example` y `scripts/lnaddr_pay.py` (paga una Lightning Address como una wallet, contra el dominio real). Falta: nodos, dominio con HTTPS y la prueba en sí. No se confirmó ninguna wallet móvil que pague Lightning Address en testnet4 (candidata: ZEUS remoto contra el LND pagador). Signet no está soportado.
 
 **Operativo**
-10. Nodo y dominio dedicados, HTTPS con reverse proxy, `DOMAIN=ln2oc.com`, `EXTERNAL_URL=https://ln2oc.com`.
+10. Nodo (hecho: servicio `lnd` del compose, ver `docs/prod.md`; falta crear la wallet y fondearlo) y dominio dedicados, HTTPS con reverse proxy, `DOMAIN=ln2oc.com`, `EXTERNAL_URL=https://ln2oc.com`.
 11. Aviso cuando el saldo on-chain gastable baja de un umbral (la reposición en sí es manual).
 
 **Para charlar**
