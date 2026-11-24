@@ -315,7 +315,7 @@ export default function Arquitectura() {
             <code>
               ACCEPTED
             </code>
-            : mientras la wallet on-chain tenga alguna tx sin confirmar no se hace nada. Con la wallet quieta, todos los pagos retenidos se pagan en una sola tx, del más viejo al más nuevo: desde el primero que no entra en el saldo, ese y todos los que siguen se cancelan, igual que una dirección repetida o un payout que la minería dejaría en dust. A la derecha, en la misma vuelta: settle, fondeo, firma, verificación y publicación. Cualquier falla en ese tramo frena el servicio, sin reintentos.
+            : mientras la wallet on-chain tenga alguna tx sin confirmar no se hace nada. Con la wallet quieta, todos los pagos retenidos se pagan en una sola tx, del más viejo al más nuevo: desde el primero que no entra en el saldo (menos una reserva que nunca se paga, para que el cambio no quede en dust), ese y todos los que siguen se cancelan, igual que una dirección repetida o un payout que la minería dejaría en dust. Si LND no puede leer el saldo o estimar la tx, el servicio se frena. A la derecha, en la misma vuelta: settle, fondeo, firma, verificación y publicación. Cualquier falla en ese tramo frena el servicio, sin reintentos.
           </figcaption>
         </figure>
       </section>
@@ -337,7 +337,7 @@ export default function Arquitectura() {
               <code>
                 ACCEPTED
               </code>
-              {" "}lo único que se hace es esperar a que no quede ninguna tx de la wallet en la mempool y aplicar las reglas: saldo, dust y tasa máxima.
+              {" "}lo único que se hace es esperar a que no quede ninguna tx de la wallet en la mempool y aplicar las reglas: saldo (menos la reserva), dust y tasa máxima.
             </span>
           </li>
           <li>
@@ -412,7 +412,7 @@ export default function Arquitectura() {
                   <code>
                     PENDING
                   </code>
-                  . No reserva saldo.
+                  . No reserva saldo para el swap: el compromiso se toma al llegar el pago.
                 </td>
               </tr>
               <tr>
@@ -460,7 +460,7 @@ export default function Arquitectura() {
                   app/fees.py
                 </td>
                 <td>
-                  Tasa de minería (sat/kw → sat/vB, redondeando para arriba) y monto − comisión con aritmética entera. La minería de cada payout es la estimación de LND para la tx real, + 20 %.
+                  Tasa de minería (sat/kw → sat/vB, redondeando para arriba) y monto − comisión con aritmética entera. La minería de cada payout es la estimación de LND para la tx real, + 20 %; la tx se fondea con esa misma tasa de LND, sin redondearla.
                 </td>
               </tr>
               <tr>

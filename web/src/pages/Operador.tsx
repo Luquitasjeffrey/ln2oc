@@ -499,7 +499,11 @@ export default function Operador() {
               <code>
                 MAX_SWAP_SAT
               </code>
-              {" "}viene en 1.000.000 sats: el servicio apunta a montos chicos. LND además reserva 10.000 sats por canal anchor (hasta 100.000), que no se pueden gastar.
+              {" "}viene en 1.000.000 sats: el servicio apunta a montos chicos. LND además reserva 10.000 sats por canal anchor (hasta 100.000), que no se pueden gastar. Y ln2oc nunca paga los últimos{" "}
+              <code>
+                ONCHAIN_RESERVE_SAT
+              </code>
+              {" "}(10.000 por defecto): así el cambio de cada payout queda siempre por encima de dust. Si quedara en dust, LND lo sumaría a la minería, la tx pagaría más de lo cobrado y el payout fallaría después del settle.
             </p>
           </div>
           <div className="size">
