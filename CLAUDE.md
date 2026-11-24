@@ -32,11 +32,11 @@ EXPIRED                        FAILED (hold invoice cancelada: el pagador no pie
 MANUAL_REVIEW: todo lo que no es una regla de negocio → el proceso termina y no arranca mientras exista uno.
 ```
 
-1. `create_swap` (`app/swaps.py`): valida dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**), **no reserva saldo** (solo un fail-fast contra el saldo gastable) y emite la hold invoice.
+1. `create_swap` (`app/swaps.py`): valida dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**), **no reserva saldo** (solo un fail-fast contra el saldo gastable menos la reserva) y emite la hold invoice.
 2. Polling: invoice `ACCEPTED` → `INVOICE_HOLD`; cancelada → `EXPIRED`; otra cosa → fatal.
 3. Cada vuelta (`tick`), si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), no se hace nada con los retenidos. Si no, `_pay` toma **todos** los `INVOICE_HOLD` en orden de llegada (cada invoice tiene que seguir `ACCEPTED`; si no, fatal):
    - dirección ya tomada → `FAILED`;
-   - se acumula `gross_sat` mientras entre en el saldo gastable; desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
+   - se acumula `gross_sat` mientras entre en el saldo gastable menos `ONCHAIN_RESERVE_SAT` (10k: así el cambio nunca queda en dust); desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
    - minería: `EstimateFee` de la tx con todos los outputs × `MINER_FEE_MARGIN` (1,2), en partes iguales (redondeo hacia arriba). Tasa > `MAX_SAT_PER_VBYTE` → todos `FAILED`; payout bajo dust → ese `FAILED` y se re-estima.
 4. En la misma vuelta: settle de cada uno (tiene que quedar `SETTLED` al instante), `FundPsbt` con los payouts netos a la tasa estimada, `FinalizePsbt`, `_verify` (cada destino una vez con su payout, a lo sumo un output más que es el cambio, inputs = UTXOs leaseados, 0 < minería real ≤ lo cobrado), log de la raw tx, `PublishTransaction` y todos a `SUCCESS` en una transacción de la DB (txid, raw tx, `payout_sat`, `actual_fee_sat` = la parte cobrada, `fee_rate_sat_vb`). **Cualquier excepción desde el primer settle → `MANUAL_REVIEW` de todos los swaps de esa tx** ("USER IS OWED"), sin reintentos.
 

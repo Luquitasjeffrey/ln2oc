@@ -6,6 +6,7 @@ does not fit the balance, it and every later one.
 """
 import time
 
+from app.config import settings
 from app.lnd import InvoiceState, lnd_client
 from app.models import Swap, SwapStatus
 from app.tx import parse_tx
@@ -103,3 +104,16 @@ def test_miner_fee_rate_above_the_max_refunds_everyone(env, payer, monkeypatch):
     done = _tick_all(env, [s[0] for s in swaps])
     assert not env["fatal"].reasons, env["fatal"].reasons
     assert all(s.status == SwapStatus.FAILED and "MAX_SAT_PER_VBYTE" in s.error for s in done)
+
+
+def test_the_onchain_reserve_is_never_paid_out(env, payer, monkeypatch):
+    """A payout that would leave less than ONCHAIN_RESERVE_SAT in the wallet is refunded:
+    otherwise its change could be dust, LND would add it to the miner fee and the tx
+    would pay more than the users were charged, after the settle."""
+    swaps = _held_while_wallet_busy(env, payer, [45_000])
+    monkeypatch.setattr(SwapWorker, "_spendable_sat", lambda self: 45_000 + settings.ONCHAIN_RESERVE_SAT - 1)
+    done = _tick_all(env, [s[0] for s in swaps])
+    assert not env["fatal"].reasons, env["fatal"].reasons
+    assert done[0].status == SwapStatus.FAILED and "reserve" in done[0].error, done[0].error
+    assert swaps[0][2].result(timeout=60).payment_error != ""
+    mine_blocks(1)

@@ -23,6 +23,7 @@ services:
       - MIN_SWAP_SAT=${MIN_SWAP_SAT:-1000}
       - MAX_SWAP_SAT=${MAX_SWAP_SAT:-1000000}
       - MIN_SAT_PER_VBYTE=${MIN_SAT_PER_VBYTE:-1}
+      - ONCHAIN_RESERVE_SAT=${ONCHAIN_RESERVE_SAT:-10000}
       - DOMAIN=${DOMAIN:-127.0.0.1:8000}
       - EXTERNAL_URL=${EXTERNAL_URL:-http://127.0.0.1:8000}
       # The website is another server (service "web"); GET / only redirects there.

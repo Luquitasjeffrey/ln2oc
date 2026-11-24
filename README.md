@@ -40,7 +40,7 @@ EXPIRED (nunca se pagó)          FAILED (invoice cancelada, el pagador no pierd
 3. **Pago retenido**: el polling ve la invoice `ACCEPTED` → `INVOICE_HOLD`.
 4. **Cada vuelta**, si la wallet on-chain tiene alguna tx sin confirmar (entrante o saliente, incluido el payout anterior), no se hace nada más. Si no, se pagan **todos** los `INVOICE_HOLD` en **una sola tx** (un output por swap), del más viejo al más nuevo:
    - una dirección que ya está en la tx → `FAILED` (reembolso);
-   - se acumula `gross_sat` mientras entre en el saldo gastable; desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
+   - se acumula `gross_sat` mientras entre en el saldo gastable menos `ONCHAIN_RESERVE_SAT` (10k: así el cambio nunca queda en dust); desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
    - minería: la estimación de LND para esa tx (`EstimateFee`, a la tasa del momento) **+ 20 %**, repartida en partes iguales. Lo cobrado de más queda en el cambio (para la casa). Si un payout queda en dust → `FAILED`.
 
    $$\text{payout} = \text{gross\_sat} - \left\lceil \frac{1{,}2 \times \text{minería estimada de la tx}}{\text{swaps en la tx}} \right\rceil$$
@@ -89,6 +89,7 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `MIN_SAT_PER_VBYTE` | Tasa de minería mínima (sat/vB) | `1` |
 | `MAX_SAT_PER_VBYTE` | Si LND estima más que esto al armar el payout, se reembolsa a todos | `500` |
 | `FEE_TARGET_CONF` | Bloques objetivo para la estimación de fee | `2` |
+| `ONCHAIN_RESERVE_SAT` | Saldo on-chain que nunca se paga: el cambio del payout siempre queda por encima de dust (si no, LND lo suma a la minería y el payout falla después del settle) | `10000` |
 | `ONCHAIN_MIN_CONFS` | Confirmaciones mínimas de los UTXOs usados para pagar | `1` |
 | `INVOICE_EXPIRY_SECONDS` | Expiración de la hold invoice | `3600` |
 | `HOLD_INVOICE_CLTV_EXPIRY` | CLTV final pedido para los HTLC de la hold invoice | `144` |

@@ -11,7 +11,7 @@ Each tick:
      included), does nothing else.
   3. Otherwise pays every INVOICE_HOLD swap in ONE tx (one output each), oldest first:
      - a destination already taken -> FAILED (refunded);
-     - gross is accumulated while it fits the spendable balance; from the first one that
+     - gross is accumulated while it fits the spendable balance minus ONCHAIN_RESERVE_SAT; from the first one that
        does not fit, it and every later one -> FAILED;
      - the miner fee is LND's estimate for that tx + 20 %, split equally; a payout that
        would be dust -> FAILED.
@@ -236,9 +236,10 @@ class SwapWorker:
         for i, swap in enumerate(held):
             if swap.btc_address in {s.btc_address for s in taken}:
                 self._refund(db, swap, "another held payment of this payout pays the same address")
-            elif total + swap.gross_sat > spendable:
+            elif total + swap.gross_sat > spendable - settings.ONCHAIN_RESERVE_SAT:
                 for late in held[i:]:
                     self._refund(db, late, f"insufficient on-chain balance: {spendable} sat spendable, "
+                                           f"{settings.ONCHAIN_RESERVE_SAT} sat reserve, "
                                            f"{total} sat taken by earlier payments")
                 break
             else:

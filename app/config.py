@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     FEE_TARGET_CONF: int = 2
     # Confirmations required on wallet UTXOs used to fund payouts (0 = allow unconfirmed change).
     ONCHAIN_MIN_CONFS: int = 1
+    # Sats of the on-chain balance never paid out. A payout that nearly drains the wallet
+    # leaves its change below dust, LND adds it to the miner fee and the tx pays more fee
+    # than the users were charged: that fails after the settle. The change is always at
+    # least this reserve, so it must stay well above dust.
+    ONCHAIN_RESERVE_SAT: int = 10_000
 
     # Hold invoices
     INVOICE_EXPIRY_SECONDS: int = 3600
@@ -79,6 +84,8 @@ class Settings(BaseSettings):
             errors.append("Require 0 < MIN_SWAP_SAT <= MAX_SWAP_SAT")
         if not (1 <= self.MIN_SAT_PER_VBYTE <= self.MAX_SAT_PER_VBYTE):
             errors.append("Require 1 <= MIN_SAT_PER_VBYTE <= MAX_SAT_PER_VBYTE")
+        if self.ONCHAIN_RESERVE_SAT < 0:
+            errors.append("ONCHAIN_RESERVE_SAT must be >= 0")
         if self.ONCHAIN_MIN_CONFS < 0:
             errors.append("ONCHAIN_MIN_CONFS must be >= 0")
         if self.HOLD_INVOICE_CLTV_EXPIRY < 40:

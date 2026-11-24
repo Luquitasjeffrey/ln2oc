@@ -79,9 +79,10 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     except (LndUnavailable, LndError) as e:
         logger.error("Could not read on-chain balance: %s", e)
         raise SwapError("Lightning node unavailable, try again later.", status_code=503)
-    if spendable < required_sat:
+    available = spendable - settings.ONCHAIN_RESERVE_SAT
+    if available < required_sat:
         raise SwapError(
-            f"Insufficient available on-chain balance: {spendable} sats available, {required_sat} sats required.",
+            f"Insufficient available on-chain balance: {available} sats available, {required_sat} sats required.",
             status_code=400,
         )
 
