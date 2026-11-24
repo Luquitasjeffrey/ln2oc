@@ -176,7 +176,12 @@ class SwapWorker:
     # ------------------------------------------------------------------ tick
 
     def tick(self, poll_pending: bool = True) -> bool:
-        """One pass. Returns True while payments are held (they need a quick retry)."""
+        """One pass of the worker. Returning never stops the worker: _run calls tick()
+        again and again until stop(). The return value only picks how soon:
+          False -> nothing is held: next tick at the next poll (INVOICE_POLL_INTERVAL_SECONDS).
+          True  -> payments are held waiting for the wallet: next tick in
+                   WORKER_RETRY_INTERVAL_SECONDS (without polling PENDING), so they are
+                   paid right after the block that unblocks them."""
         self._poll_completed = False
         with self.session_factory() as db:
             if db.execute(select(Swap.id).where(Swap.status == SwapStatus.MANUAL_REVIEW)).first():
@@ -191,15 +196,15 @@ class SwapWorker:
 
             held = self._swaps(db, SwapStatus.INVOICE_HOLD)
             if not held:
-                return False
+                return False  # nothing to pay: no hurry, come back at the next poll
             unconfirmed = self.lnd.unconfirmed_txids(self._block_height())
-            if unconfirmed:
+            if unconfirmed:  # wallet busy: pay nothing now, retry soon
                 self._log_waiting(f"{len(held)} held payment(s) waiting for {len(unconfirmed)} unconfirmed "
                                   f"wallet tx(s) to confirm ({', '.join(t[:16] for t in unconfirmed[:3])})")
                 return True
             self._last_waiting = None
             self._pay(db, held)
-            return False
+            return False  # every held payment was paid or refunded: nothing left to hurry
 
     def _poll(self, db: Session, swap: Swap) -> None:
         state = self._invoice_state(swap)
