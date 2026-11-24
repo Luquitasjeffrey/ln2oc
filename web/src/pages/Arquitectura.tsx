@@ -87,7 +87,7 @@ export default function Arquitectura() {
                 1 hilo · máquina de estados
               </text>
               <text x="585" y="168" textAnchor="middle" className="m mut">
-                1 lote de payouts en vuelo
+                1 payout por vuelta
               </text>
               <text x="585" y="186" textAnchor="middle" className="m mut">
                 único que mueve plata
@@ -107,7 +107,7 @@ export default function Arquitectura() {
                 SQLite · models.py
               </text>
               <text x="465" y="479" textAnchor="middle" className="m mut">
-                swaps: estado, preimage, batch_id, raw_tx, txid
+                swaps: estado, preimage, raw_tx, txid
               </text>
               <path d="M230 240 C 206 280, 206 410, 262 436" className="e" markerEnd="url(#a)" />
               <text x="196" y="330" textAnchor="end" className="m mut">
@@ -227,106 +227,75 @@ export default function Arquitectura() {
           La máquina de estados
         </h2>
         <p className="read">
-          Cada swap vive en un estado guardado en la DB. Cada paso se puede volver a ejecutar después de una caída en cualquier punto, y una respuesta ambigua de LND nunca se toma como fracaso: se vuelve a consultar el estado real.
+          Cada swap vive en un estado guardado en la DB. El pago on-chain es un solo paso dentro de una vuelta del worker: no hay estados intermedios que retomar. Si algo se corta a mitad de camino, el servicio se frena y lo revisa una persona.
         </p>
         <figure>
           <div className="canvas">
-            <svg className="dg wide" viewBox="0 0 1150 380" role="img" aria-label="Máquina de estados: PENDING, SETTLING, PAID, SIGNED, BROADCASTED. En SETTLING solo se chequea el saldo; sin saldo o sin margen se va a CANCELING y FAILED. Desde PAID, con la invoice cobrada, ya no hay reembolso: se firma, se guarda y se publica.">
+            <svg className="dg wide" viewBox="0 0 1150 340" role="img" aria-label="Máquina de estados: PENDING, INVOICE_HOLD, SUCCESS. En INVOICE_HOLD se espera a que la wallet no tenga tx sin confirmar y se aplican las reglas de saldo y dust; lo que no entra va a FAILED. Desde el settle, cualquier falla va a MANUAL_REVIEW.">
               <defs>
                 <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                   <path d="M0,0 L10,5 L0,10 z" className="hd" />
                 </marker>
               </defs>
-              <line x1="472" y1="20" x2="472" y2="370" className="noreturn" />
-              <text x="484" y="34" className="m btct">
-                desde acá el operador ya cobró:
+              <line x1="560" y1="20" x2="560" y2="330" className="noreturn" />
+              <text x="572" y="34" className="m btct">
+                desde el settle el operador ya cobró:
               </text>
-              <text x="484" y="50" className="m btct">
-                no hay reembolso, se firma y se publica
+              <text x="572" y="50" className="m btct">
+                no hay reembolso ni reintentos
               </text>
               <rect x="20" y="70" width="130" height="44" rx="22" className="st" />
               <text x="85" y="97" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
                 PENDING
               </text>
-              <rect x="255" y="70" width="130" height="44" rx="22" className="st" />
-              <text x="320" y="97" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
-                SETTLING
+              <rect x="300" y="70" width="170" height="44" rx="22" className="st" />
+              <text x="385" y="97" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
+                INVOICE_HOLD
               </text>
-              <rect x="560" y="70" width="130" height="44" rx="22" className="st" />
-              <text x="625" y="97" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
-                PAID
+              <rect x="900" y="70" width="170" height="44" rx="22" className="st-ok" />
+              <text x="985" y="97" textAnchor="middle" className="m okt" style={{ fontWeight: "600" }}>
+                SUCCESS
               </text>
-              <rect x="760" y="70" width="130" height="44" rx="22" className="st" />
-              <text x="825" y="97" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
-                SIGNED
-              </text>
-              <rect x="960" y="70" width="170" height="44" rx="22" className="st-ok" />
-              <text x="1045" y="97" textAnchor="middle" className="m okt" style={{ fontWeight: "600" }}>
-                BROADCASTED
-              </text>
-              <path d="M150 92 L249 92" className="e" markerEnd="url(#s)" />
-              <text x="200" y="134" textAnchor="middle" className="m mut">
+              <path d="M150 92 L294 92" className="e" markerEnd="url(#s)" />
+              <text x="222" y="134" textAnchor="middle" className="m mut">
                 invoice
               </text>
-              <text x="200" y="149" textAnchor="middle" className="m mut">
+              <text x="222" y="149" textAnchor="middle" className="m mut">
                 ACCEPTED
               </text>
-              <path d="M385 92 L554 92" className="e" markerEnd="url(#s)" />
-              <text x="428" y="134" textAnchor="middle" className="m mut">
-                saldo OK,
+              <path d="M470 92 L894 92" className="e" markerEnd="url(#s)" />
+              <text x="515" y="134" textAnchor="middle" className="m mut">
+                wallet quieta,
               </text>
-              <text x="428" y="149" textAnchor="middle" className="m mut">
-                settle
+              <text x="515" y="149" textAnchor="middle" className="m mut">
+                saldo OK
               </text>
-              <text x="516" y="134" textAnchor="middle" className="m mut">
-                invoice
+              <text x="730" y="134" textAnchor="middle" className="m mut">
+                settle + fondear + firmar
               </text>
-              <text x="516" y="149" textAnchor="middle" className="m mut">
-                SETTLED
-              </text>
-              <path d="M690 92 L754 92" className="e" markerEnd="url(#s)" />
-              <text x="725" y="134" textAnchor="middle" className="m mut">
-                firma
-              </text>
-              <text x="725" y="149" textAnchor="middle" className="m mut">
-                y guarda
-              </text>
-              <path d="M890 92 L954 92" className="e" markerEnd="url(#s)" />
-              <text x="925" y="134" textAnchor="middle" className="m mut">
-                publish
-              </text>
-              <text x="925" y="149" textAnchor="middle" className="m mut">
-                idempotente
+              <text x="730" y="149" textAnchor="middle" className="m mut">
+                + verificar + publicar
               </text>
               <rect x="20" y="236" width="130" height="44" rx="22" className="st" />
               <text x="85" y="263" textAnchor="middle" className="m" style={{ fontWeight: "600" }}>
                 EXPIRED
               </text>
-              <rect x="255" y="236" width="130" height="44" rx="22" className="st-bad" />
-              <text x="320" y="263" textAnchor="middle" className="m badt" style={{ fontWeight: "600" }}>
-                CANCELING
-              </text>
-              <rect x="255" y="324" width="130" height="44" rx="22" className="st-bad" />
-              <text x="320" y="351" textAnchor="middle" className="m badt" style={{ fontWeight: "600" }}>
+              <rect x="320" y="236" width="130" height="44" rx="22" className="st-bad" />
+              <text x="385" y="263" textAnchor="middle" className="m badt" style={{ fontWeight: "600" }}>
                 FAILED
               </text>
               <path d="M85 114 L85 230" className="e" markerEnd="url(#s)" />
               <text x="94" y="176" className="m mut">
                 no pagada
               </text>
-              <path d="M140 110 L262 238" className="e" markerEnd="url(#s)" />
-              <text x="160" y="222" className="m mut">
-                sin margen
+              <path d="M385 114 L385 230" className="e" markerEnd="url(#s)" />
+              <text x="393" y="164" className="m mut">
+                sin saldo, dust
               </text>
-              <path d="M320 114 L320 230" className="e" markerEnd="url(#s)" />
-              <text x="328" y="172" className="m mut">
-                sin saldo
+              <text x="393" y="179" className="m mut">
+                o dirección repetida:
               </text>
-              <text x="328" y="187" className="m mut">
-                o sin margen
-              </text>
-              <path d="M320 280 L320 318" className="e" markerEnd="url(#s)" />
-              <text x="328" y="304" className="m mut">
+              <text x="393" y="194" className="m mut">
                 CancelInvoice
               </text>
               <rect x="760" y="226" width="370" height="64" rx="10" className="st-bad" />
@@ -334,7 +303,7 @@ export default function Arquitectura() {
                 MANUAL_REVIEW
               </text>
               <text x="945" y="272" textAnchor="middle" className="m mut">
-                si algo falla después del cobro, o algo no cuadra:
+                cualquier cosa fuera de las reglas:
               </text>
               <text x="945" y="287" textAnchor="middle" className="m mut">
                 frena el proceso y no arranca más
@@ -346,11 +315,7 @@ export default function Arquitectura() {
             <code>
               ACCEPTED
             </code>
-            {" "}y lo único que se hace es esperar a que la wallet on-chain no tenga ninguna tx sin confirmar, juntar en un lote los pagos retenidos y mirar el saldo, con una simulación de la tx en LND que no reserva nada: el pago que no entra, o cuyo payout la minería dejaría en dust, se cancela y ese pagador no pierde nada. A la derecha, la invoice ya está{" "}
-            <code>
-              SETTLED
-            </code>
-            : recién ahí se firma una sola tx para todo el lote, se guarda en la DB y se publica. Publicar se puede reintentar sin riesgo de pagar dos veces, y cualquier falla en ese tramo frena el servicio.
+            : mientras la wallet on-chain tenga alguna tx sin confirmar no se hace nada. Con la wallet quieta, todos los pagos retenidos se pagan en una sola tx, del más viejo al más nuevo: desde el primero que no entra en el saldo, ese y todos los que siguen se cancelan, igual que una dirección repetida o un payout que la minería dejaría en dust. A la derecha, en la misma vuelta: settle, fondeo, firma, verificación y publicación. Cualquier falla en ese tramo frena el servicio, sin reintentos.
           </figcaption>
         </figure>
       </section>
@@ -362,7 +327,7 @@ export default function Arquitectura() {
           <li>
             <span>
               <b>
-                La tx on-chain se firma recién con la invoice{" "}
+                La tx on-chain se arma recién con la invoice{" "}
                 <code>
                   SETTLED
                 </code>
@@ -372,23 +337,31 @@ export default function Arquitectura() {
               <code>
                 ACCEPTED
               </code>
-              {" "}lo único que se hace es esperar a que no quede ninguna tx de la wallet en la mempool (entrante o saliente: mientras haya una no se chequea ni se cancela nada), chequear el saldo y que la minería, aun en su tope (2× la estimada), no deje el payout en dust. Al firmar se paga la tasa del momento, hasta ese tope.
+              {" "}lo único que se hace es esperar a que no quede ninguna tx de la wallet en la mempool y aplicar las reglas: saldo, dust y tasa máxima.
             </span>
           </li>
           <li>
             <span>
               <b>
-                Solo se publica la tx exacta que se firmó, verificó y guardó en la DB.
+                La minería la pagan los usuarios, con margen.
               </b>
-              {" "}Republicarla es idempotente: imposible pagar dos veces.
+              {" "}Es la estimación del nodo para la tx real, a la tasa del momento, más un 20 %, en partes iguales. Antes de publicar se verifica que la minería real no supere lo cobrado.
             </span>
           </li>
           <li>
             <span>
               <b>
-                Sin saldo o sin margen de CLTV, se cancela la hold invoice antes de cobrar.
+                Sin saldo, se cancela la hold invoice antes de cobrar.
               </b>
               {" "}Los sats del pagador nunca salen de su wallet.
+            </span>
+          </li>
+          <li>
+            <span>
+              <b>
+                No se atajan casos bordes.
+              </b>
+              {" "}Cada caso borde manejado es código, y el código es superficie de ataque. Lo que no es una regla de negocio frena el servicio a propósito; se ataca recién cuando pasa.
             </span>
           </li>
           <li>
@@ -435,7 +408,7 @@ export default function Arquitectura() {
                   app/swaps.py
                 </td>
                 <td>
-                  Crea el swap: calcula monto − comisión (sin minería: se fija al firmar), emite la hold invoice y guarda el swap{" "}
+                  Crea el swap: calcula monto − comisión (sin minería: se fija al pagar), emite la hold invoice y guarda el swap{" "}
                   <code>
                     PENDING
                   </code>
@@ -447,7 +420,7 @@ export default function Arquitectura() {
                   app/worker.py
                 </td>
                 <td>
-                  La máquina de estados. Único hilo que mueve plata, con un lote de payouts en vuelo a la vez (una tx, un output por swap) y transiciones compare-and-set. También detecta los pagos: cada INVOICE_POLL_INTERVAL_SECONDS consulta cada swap PENDING con LookupInvoice, de a uno.
+                  Único hilo que mueve plata: paga todos los pagos retenidos en una tx (un output por swap), en un solo paso, con transiciones compare-and-set. También detecta los pagos: cada INVOICE_POLL_INTERVAL_SECONDS consulta cada swap PENDING con LookupInvoice, de a uno.
                 </td>
               </tr>
               <tr>
@@ -487,7 +460,7 @@ export default function Arquitectura() {
                   app/fees.py
                 </td>
                 <td>
-                  Tasa de minería (sat/kw → sat/vB, redondeando para arriba) y monto − comisión con aritmética entera. La minería de cada payout sale de la tx real al firmar.
+                  Tasa de minería (sat/kw → sat/vB, redondeando para arriba) y monto − comisión con aritmética entera. La minería de cada payout es la estimación de LND para la tx real, + 20 %.
                 </td>
               </tr>
               <tr>

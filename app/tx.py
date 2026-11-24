@@ -54,11 +54,6 @@ class _Reader:
 
 
 def parse_tx(raw: bytes) -> ParsedTx:
-    return _parse(raw)[0]
-
-
-def _parse(raw: bytes) -> tuple[ParsedTx, list[int], bool]:
-    """Returns the parsed tx, the byte offset of each output's 8-byte value, and segwit."""
     r = _Reader(raw)
     version = r.read(4)
 
@@ -83,9 +78,7 @@ def _parse(raw: bytes) -> tuple[ParsedTx, list[int], bool]:
     if n_out == 0:
         raise ValueError("transaction has no outputs")
     outputs = []
-    value_offsets = []
     for _ in range(n_out):
-        value_offsets.append(r.pos)
         value = r.u64()
         script = r.read(r.varint())
         outputs.append(TxOutput(value=value, script=script))
@@ -103,62 +96,4 @@ def _parse(raw: bytes) -> tuple[ParsedTx, list[int], bool]:
     txid = hashlib.sha256(hashlib.sha256(version + body + locktime).digest()).digest()[::-1].hex()
     base_size = len(version) + len(body) + len(locktime)
     vsize = (base_size * 3 + len(raw) + 3) // 4
-    return ParsedTx(txid=txid, inputs=inputs, outputs=outputs, vsize=vsize), value_offsets, segwit
-
-
-# --------------------------------------------------------------------------- PSBT (v0)
-
-_PSBT_MAGIC = b"psbt\xff"
-_MAX_SAT = 21_000_000 * 100_000_000
-
-
-def _psbt_unsigned_tx_span(psbt: bytes) -> tuple[int, int]:
-    """Byte span of the unsigned tx in a BIP-174 (v0) PSBT's global map."""
-    if not psbt.startswith(_PSBT_MAGIC):
-        raise ValueError("not a PSBT")
-    r = _Reader(psbt)
-    r.read(len(_PSBT_MAGIC))
-    span = None
-    while True:
-        key_len = r.varint()
-        if key_len == 0:
-            break
-        key = r.read(key_len)
-        value_len = r.varint()
-        start = r.pos
-        value = r.read(value_len)
-        if key == b"\x00":
-            if span is not None:
-                raise ValueError("PSBT has two unsigned transactions")
-            span = (start, start + value_len)
-        elif key[0] == 0xFB and int.from_bytes(value, "little") != 0:
-            raise ValueError("only PSBT version 0 is supported")
-    if span is None:
-        raise ValueError("PSBT has no unsigned transaction")
-    return span
-
-
-def psbt_unsigned_tx(psbt: bytes) -> ParsedTx:
-    start, end = _psbt_unsigned_tx_span(psbt)
-    tx, _, segwit = _parse(psbt[start:end])
-    if segwit:
-        raise ValueError("PSBT unsigned tx must not carry witnesses")
-    return tx
-
-
-def psbt_set_output_values(psbt: bytes, values: dict[int, int]) -> bytes:
-    """Rewrites output amounts of an unsigned PSBT in place. Amounts are fixed 8-byte
-    fields, so the size of the tx (and its fee at a given rate) does not change."""
-    start, end = _psbt_unsigned_tx_span(psbt)
-    _, offsets, segwit = _parse(psbt[start:end])
-    if segwit:
-        raise ValueError("PSBT unsigned tx must not carry witnesses")
-    out = bytearray(psbt)
-    for idx, value in values.items():
-        if not 0 <= idx < len(offsets):
-            raise ValueError(f"PSBT has no output #{idx}")
-        if not 0 < value <= _MAX_SAT:
-            raise ValueError(f"invalid output value {value}")
-        pos = start + offsets[idx]
-        out[pos:pos + 8] = value.to_bytes(8, "little")
-    return bytes(out)
+    return ParsedTx(txid=txid, inputs=inputs, outputs=outputs, vsize=vsize)

@@ -27,37 +27,26 @@ class Settings(BaseSettings):
     MIN_SAT_PER_VBYTE: int = 1
     # Refuse to operate if LND estimates more than this (protects against absurd estimates).
     MAX_SAT_PER_VBYTE: int = 500
-    # The payout pays the fee rate of the moment it is signed, but never more than this
-    # many times the miner fee estimated before settling (when the payer can still be refunded).
-    MINER_FEE_CAP_MULTIPLIER: float = 2.0
     FEE_TARGET_CONF: int = 2
     # Confirmations required on wallet UTXOs used to fund payouts (0 = allow unconfirmed change).
     ONCHAIN_MIN_CONFS: int = 1
-    # Held payments waiting while the wallet has unconfirmed txs are paid together, in one
-    # tx with one output each, once it is quiet again: at most this many per tx (1 = one
-    # payout per tx). Bounded so an attacker cannot grow it.
-    MAX_PAYOUT_BATCH: int = 10
-    # How long LND keeps our UTXOs leased while a payout is in flight.
-    UTXO_LEASE_SECONDS: int = 86_400
 
     # Hold invoices
     INVOICE_EXPIRY_SECONDS: int = 3600
     # Final CLTV delta requested for the hold invoice HTLCs.
     HOLD_INVOICE_CLTV_EXPIRY: int = 144
-    # Never settle an HTLC that expires in fewer blocks than this; cancel (refund) instead.
-    # Must stay well above LND's own hold-invoice auto-cancel delta (~12 blocks).
-    MIN_CLTV_MARGIN_BLOCKS: int = 40
 
     # Payment detection: the worker thread looks up every PENDING invoice, one after
     # another, once per this interval (no subscriptions, no extra threads). A held HTLC
     # stays in flight for the payer meanwhile, so a long interval only delays the payout.
     INVOICE_POLL_INTERVAL_SECONDS: float = 60.0
-    # Retry pace for our own in-flight operations (fund/settle/publish/cancel, or a held
-    # payment waiting for the payout slot). Never re-polls every PENDING invoice.
+    # Retry pace while payments are held (waiting for the wallet to have no unconfirmed
+    # tx) or LND is unavailable. Never re-polls every PENDING invoice.
     WORKER_RETRY_INTERVAL_SECONDS: float = 2.0
-    # Max PENDING swaps (unpaid invoices). Bounds the work of each poll: new swaps are
-    # refused (503) beyond this.
-    MAX_PENDING_SWAPS: int = 5000
+    # Max PENDING + INVOICE_HOLD swaps. Bounds the work of each tick and the size of a
+    # payout tx (one output per held swap): new swaps are refused (503) beyond this. At
+    # most 1000, so a payout tx stays well below the 100 kvB standardness limit.
+    MAX_PENDING_SWAPS: int = 1000
 
     # LNURL & Server
     DOMAIN: str = "127.0.0.1:8000"
@@ -88,28 +77,20 @@ class Settings(BaseSettings):
             errors.append("SWAP_FEE_RATE supports at most 0.01% (basis point) precision")
         if not (0 < self.MIN_SWAP_SAT <= self.MAX_SWAP_SAT):
             errors.append("Require 0 < MIN_SWAP_SAT <= MAX_SWAP_SAT")
-        if not (1.0 <= self.MINER_FEE_CAP_MULTIPLIER <= 10.0):
-            errors.append("Require 1 <= MINER_FEE_CAP_MULTIPLIER <= 10")
         if not (1 <= self.MIN_SAT_PER_VBYTE <= self.MAX_SAT_PER_VBYTE):
             errors.append("Require 1 <= MIN_SAT_PER_VBYTE <= MAX_SAT_PER_VBYTE")
         if self.ONCHAIN_MIN_CONFS < 0:
             errors.append("ONCHAIN_MIN_CONFS must be >= 0")
-        if self.MIN_CLTV_MARGIN_BLOCKS < 20:
-            errors.append("MIN_CLTV_MARGIN_BLOCKS must be >= 20")
-        if self.HOLD_INVOICE_CLTV_EXPIRY <= self.MIN_CLTV_MARGIN_BLOCKS + 10:
-            errors.append("HOLD_INVOICE_CLTV_EXPIRY must exceed MIN_CLTV_MARGIN_BLOCKS by > 10 blocks")
+        if self.HOLD_INVOICE_CLTV_EXPIRY < 40:
+            errors.append("HOLD_INVOICE_CLTV_EXPIRY must be >= 40")
         if not (0 < self.WORKER_RETRY_INTERVAL_SECONDS <= 60):
             errors.append("Require 0 < WORKER_RETRY_INTERVAL_SECONDS <= 60")
         if not (1 <= self.INVOICE_POLL_INTERVAL_SECONDS <= 600):
             errors.append("Require 1 <= INVOICE_POLL_INTERVAL_SECONDS <= 600")
         if self.INVOICE_EXPIRY_SECONDS <= 2 * self.INVOICE_POLL_INTERVAL_SECONDS:
             errors.append("INVOICE_EXPIRY_SECONDS must exceed 2 x INVOICE_POLL_INTERVAL_SECONDS")
-        if self.MAX_PENDING_SWAPS < 1:
-            errors.append("MAX_PENDING_SWAPS must be >= 1")
-        if not (1 <= self.MAX_PAYOUT_BATCH <= 50):
-            errors.append("Require 1 <= MAX_PAYOUT_BATCH <= 50")
-        if self.UTXO_LEASE_SECONDS < 600:
-            errors.append("UTXO_LEASE_SECONDS must be >= 600")
+        if not (1 <= self.MAX_PENDING_SWAPS <= 1000):
+            errors.append("Require 1 <= MAX_PENDING_SWAPS <= 1000")
         if self.FRONTEND_URL and not self.FRONTEND_URL.startswith(("https://", "http://")):
             errors.append("FRONTEND_URL must be an http(s):// URL")
         if errors:

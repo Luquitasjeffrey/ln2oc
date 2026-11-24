@@ -124,7 +124,7 @@ def env(tmp_path):
     e = {"Session": Session, "worker": worker, "fatal": fatal, "tmp_path": tmp_path}
     yield e
     for w in {id(worker): worker, id(e["worker"]): e["worker"]}.values():
-        w.stop() if w._running else w.release_process_lock()
+        w.stop() if w.is_alive() else w.release_process_lock()
     engine.dispose()
 
 
@@ -146,7 +146,7 @@ async def client(env):
 
 def insert_swap(Session, amount_sat: int, gross_sat: int, address: str) -> tuple[int, str]:
     """Creates a real hold invoice in Kross and a PENDING swap row, bypassing create_swap checks.
-    gross_sat is what the user gets before the miner fee (set when the payout is signed)."""
+    gross_sat is what the user gets before their share of the miner fee."""
     preimage = os.urandom(32)
     payment_hash = hashlib.sha256(preimage).digest()
     resp = lnd_client.add_hold_invoice(
@@ -181,14 +181,6 @@ def tick_until(env, swap_id: int, statuses, max_ticks: int = 60) -> Swap:
             return swap
         time.sleep(0.25)
     return get_swap(env["Session"], swap_id)
-
-
-def leases_for(batch_id_hex: str | None) -> list:
-    """UTXOs leased for a payout batch (its batch_id is the lease id)."""
-    if not batch_id_hex:
-        return []
-    lock_id = bytes.fromhex(batch_id_hex)
-    return [l for l in lnd_client.list_leases() if l.id == lock_id]
 
 
 def wait_for_status(Session, swap_id: int, statuses, timeout: float = 30.0) -> Swap:

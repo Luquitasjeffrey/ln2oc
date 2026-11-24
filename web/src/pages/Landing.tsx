@@ -332,7 +332,7 @@ export default function Landing() {
               <b>
                 Que te paguen dos veces o mal:
               </b>
-              {" "}el servicio verifica la tx firmada (destino, monto, inputs) y la guarda antes de publicarla, y reintentar siempre publica la misma tx.
+              {" "}el servicio verifica la tx firmada (destino, monto, inputs) antes de publicarla, y nunca reintenta un pago: ante cualquier duda se frena y lo revisa una persona.
             </li>
             <li className="care">
               <b>

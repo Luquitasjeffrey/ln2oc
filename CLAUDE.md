@@ -6,6 +6,7 @@ Servicio de swap **Lightning → on-chain**. La Lightning Address es la direcci�
 
 - Hablar en **español rioplatense**. Entender bien antes de tocar código; ante una decisión de diseño que mueva plata, proponer y preguntar.
 - **Fail loud**: si algo no está como se espera, frenar (MANUAL_REVIEW / terminar el proceso). Una caída es preferible a perder fondos, del operador o de los usuarios.
+- **No atacar casos bordes (filosofía del proyecto)**: a diferencia de otro software, acá cada caso borde manejado es código, y el código es superficie de ataque. Todo lo que no es una regla de negocio (saldo, dust, tasa máxima) va **deliberadamente** a un pánico controlado (`FatalSwapError` → `MANUAL_REVIEW`, el proceso frena). Un caso borde se ataca recién cuando pasa en la realidad. No agregar reintentos, recuperaciones ni ramas "por si acaso"; ante la duda, simplificar.
 - Diseños **acotados y secuenciales**: nada cuya concurrencia escale con input del atacante (nada de un hilo por orden). No escuchar el mismo evento por dos caminos a la vez.
 - Commitear cuando se termina algo y pushear solo cuando el usuario lo pide. Force push únicamente si lo pide explícitamente.
 
@@ -13,7 +14,7 @@ Servicio de swap **Lightning → on-chain**. La Lightning Address es la direcci�
 
 1. **El más importante: se consigue mejor ratio de conversión Lightning → on-chain con cantidades grandes.** Pasar 5.000.000 sats de una vez cuesta, en %, bastante menos que de a 100.000 (CEX ≤ 0,2 % según volumen; cierre cooperativo ~0 %; Loop Out 0,05–0,5 %). El margen es esa diferencia contra la comisión. Si no se cumpliera, el valor sería la comodidad (algunos usuarios pagarían ~1 %).
 2. Montos chicos: hasta **1.000.000 sats** por swap (`MAX_SWAP_SAT`).
-3. Comisión **0,7 %** por defecto (`SWAP_FEE_RATE`, configurable). La **minería del payout la paga el usuario, la real**: se paga **a la tasa del momento de firmar**, con **tope de 2× la minería estimada antes del settle** (`MINER_FEE_CAP_MULTIPLIER`), y no forma parte del %. Al crear el swap no se estima minería: se guarda `gross_sat` = monto − comisión. El operador gana **exactamente la comisión**: comisiones limpias y fáciles de contabilizar (por cada usuario tiene que haber un operador).
+3. Comisión **0,7 %** por defecto (`SWAP_FEE_RATE`, configurable). La **minería del payout la paga el usuario**, a la tasa del momento de pagar: la estimación de LND + 20 %, y no forma parte del %. Al crear el swap no se estima minería: se guarda `gross_sat` = monto − comisión. El operador gana la comisión más lo cobrado de más en minería (la diferencia siempre va para la casa, nunca en contra).
 4. **El operador repone el saldo on-chain a mano** (convertir en bloque, cerrar canales, Loop Out, CEX de paso). Automatizarlo no es parte de esta versión.
 5. **Servicio aislado**: nodo LND dedicado y dominio dedicado, con poca plata. Nunca un nodo principal ni uno que se use para otra cosa. Integrable en otros proyectos solo como servicio aparte.
 6. Cualquiera puede levantar su propia instancia (GPLv3).
@@ -24,33 +25,35 @@ Casos de uso: auto-envío desde una wallet LN (Wallet of Satoshi, Phoenix…) a 
 ## Flujo de un swap y reglas de fondos
 
 ```
-PENDING ─(invoice ACCEPTED)─► SETTLING ─(invoice SETTLED)─► PAID ─(tx firmada y guardada)─► SIGNED ─(broadcast)─► BROADCASTED
-   │                             │ espera mempool vacía, después chequea saldo + margen CLTV
-   ▼                             ▼
-EXPIRED                      CANCELING ─► FAILED (hold invoice cancelada: el pagador no pierde nada)
-MANUAL_REVIEW: invariante roto → el proceso termina y no arranca mientras exista uno.
+PENDING ─(invoice ACCEPTED)─► INVOICE_HOLD ─(settle + tx enviada, en la misma vuelta)─► SUCCESS
+   │                              │
+   ▼                              ▼
+EXPIRED                        FAILED (hold invoice cancelada: el pagador no pierde nada)
+MANUAL_REVIEW: todo lo que no es una regla de negocio → el proceso termina y no arranca mientras exista uno.
 ```
 
 1. `create_swap` (`app/swaps.py`): valida dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**), **no reserva saldo** (solo un fail-fast contra el saldo gastable) y emite la hold invoice.
-2. Invoice `ACCEPTED`: si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), **no se chequea ni se cancela nada**: el pago queda retenido en `PENDING` y se reintenta. Solo el margen de CLTV puede cortar la espera (reembolso). Con la wallet quieta, los pagos retenidos forman un **lote** (`_start_batch`: del más viejo al más nuevo, hasta `MAX_PAYOUT_BATCH`, uno por destino; el otro con la misma dirección espera al lote siguiente) → `SETTLING` con un `batch_id` común. Antes del primer settle del lote **solo se chequea** (`_payout_viability`), uno por uno en orden: LND simula pagarlo solo (`lnrpc.EstimateFee`, coin selection sin leasear) → minería estimada a la tasa actual; tope = 2× eso (se guarda en `max_miner_fee_sat` antes del settle). Se cancela esa hold invoice si gross − tope < dust, si el saldo gastable < Σ(gross + tope) del lote hasta él o si no hay estimación usable; también si no hay margen de CLTV (`MIN_CLTV_MARGIN_BLOCKS`). Después LND tiene que poder armar el lote entero en una tx (si no, se cancela el más nuevo hasta que pueda). **No se fondea ni se firma nada.**
-3. Settle de cada invoice del lote y esperar a que LND reporte `SETTLED` → `PAID`. Si se cae entre dos settles, al volver se settlea el resto **sin volver a chequear** (el lote se chequeó entero antes del primero). Desde acá se le debe el payout al usuario: cualquier falla posterior va a `MANUAL_REVIEW` ("USER IS OWED"), nunca a un reembolso automático.
-4. `PAID` → `SIGNED` (todo el lote junto, cuando ya no queda ninguno en `SETTLING`): tasa = la del momento, limitada para que el fee no pase la suma de los topes (`min(tasa, Σtopes // vB)`; si la tasa no se puede estimar o supera `MAX_SAT_PER_VBYTE`, se paga al tope). `FundPsbt` con **un output por swap** pagando cada `gross_sat` y `_deduct_fee` cobra el fee a los usuarios **en proporción a su tope** (`split_miner_fee`: el tope es proporcional a lo que costaría pagarlo solo, así que cada uno paga el peso de su payout y nunca más que su tope; enteros, el resto a los mayores restos): destino_i = gross_i − parte_i, cambio = Σinputs − Σgross (solo montos, mismo tamaño). Sin cambio → se re-fondea por los netos y la diferencia se loguea. Una suba de minería nunca manda a `MANUAL_REVIEW`: se paga hasta el tope. Después `FinalizePsbt`, verificación independiente (`app/tx.py`: cada destino con su monto exactamente una vez, a lo sumo un output más que es el cambio, inputs = UTXOs leaseados con el `batch_id`, Σpayout + fee = Σgross, fee ≥ `MIN_SAT_PER_VBYTE` × vsize) y **raw tx + txid guardados en la DB antes del broadcast** (los mismos en cada swap del lote, en una sola transacción de la DB), junto con `payout_sat`, `actual_fee_sat` (la parte de ese usuario) y `fee_rate_sat_vb` (efectiva).
-5. `SIGNED` → `BROADCASTED`: publicar la tx guardada (una vez por lote) y pasar todo el lote junto. Reintentar es idempotente.
+2. Polling: invoice `ACCEPTED` → `INVOICE_HOLD`; cancelada → `EXPIRED`; otra cosa → fatal.
+3. Cada vuelta (`tick`), si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), no se hace nada con los retenidos. Si no, `_pay` toma **todos** los `INVOICE_HOLD` en orden de llegada (cada invoice tiene que seguir `ACCEPTED`; si no, fatal):
+   - dirección ya tomada → `FAILED`;
+   - se acumula `gross_sat` mientras entre en el saldo gastable; desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
+   - minería: `EstimateFee` de la tx con todos los outputs × `MINER_FEE_MARGIN` (1,2), en partes iguales (redondeo hacia arriba). Tasa > `MAX_SAT_PER_VBYTE` → todos `FAILED`; payout bajo dust → ese `FAILED` y se re-estima.
+4. En la misma vuelta: settle de cada uno (tiene que quedar `SETTLED` al instante), `FundPsbt` con los payouts netos a la tasa estimada, `FinalizePsbt`, `_verify` (cada destino una vez con su payout, a lo sumo un output más que es el cambio, inputs = UTXOs leaseados, 0 < minería real ≤ lo cobrado), log de la raw tx, `PublishTransaction` y todos a `SUCCESS` en una transacción de la DB (txid, raw tx, `payout_sat`, `actual_fee_sat` = la parte cobrada, `fee_rate_sat_vb`). **Cualquier excepción desde el primer settle → `MANUAL_REVIEW` de todos los swaps de esa tx** ("USER IS OWED"), sin reintentos.
 
 Invariantes (ver `app/worker.py`):
 - Un único proceso (lock exclusivo de archivo) y un único hilo worker, que también detecta los pagos (polling síncrono, sin suscripciones); transiciones compare-and-set (`_transition`).
-- Como máximo **un lote en vuelo** (`SETTLING`/`PAID`/`SIGNED`, todos con el mismo `batch_id`; si no, fatal) para que el chequeo de saldo del siguiente vea la wallet ya gastada. Un lote con `SIGNED` mezclado con otro estado es fatal. Un `FatalSwapError` de un swap del lote manda a `MANUAL_REVIEW` a todo el lote en vuelo.
-- El siguiente lote no se arma, ni se chequea ni se settlea hasta que **todas** las tx de la wallet estén confirmadas (decisión del usuario: conservador; ~1 lote por bloque, hasta `MAX_PAYOUT_BATCH` swaps cada uno). Nunca se encadena sobre cambio sin confirmar.
-- Resultado ambiguo de LND (`LndUnavailable`: timeout, conexión cortada) nunca se toma como fracaso: se vuelve a consultar el estado. `LndError` = LND rechazó explícitamente.
+- El payout es un solo paso dentro de una vuelta: no hay estados intermedios que retomar. Una caída a mitad de camino deja un `INVOICE_HOLD` con la invoice `SETTLED` → fatal en la vuelta siguiente (se resuelve a mano).
+- Nunca se paga sobre cambio sin confirmar: con cualquier tx de la wallet en el mempool no se paga nada (~1 payout por bloque).
+- `LndUnavailable` antes del primer settle → reintento; después → fatal.
 - TLS hacia LND siempre verificado (falla cerrado).
 
 ## Decisiones tomadas (no volver a discutir sin que el usuario lo pida)
 
 - Reservar saldo al emitir la invoice: **descartado** (permitía bloquear liquidez gratis). La liquidez se compromete al recibir el pago.
-- Firmar antes del settle o reservar UTXOs con `FundPsbt` antes del settle: **descartado** por el usuario. Con `ACCEPTED` solo se mira el saldo.
+- Firmar antes del settle o reservar UTXOs con `FundPsbt` antes del settle: **descartado** por el usuario. Con `ACCEPTED` solo se aplican las reglas de negocio.
 - REST → **gRPC** con stubs generados desde `proto/` (fijados a LND v0.20.0-beta).
-- Minería: **a la tasa del momento de firmar, con tope de 2× la minería estimada antes del settle** (decisión del usuario), la paga el usuario; nada de vbytes hardcodeados. Antes del settle, una simulación de LND fija el tope y cancela si con el tope no da (dust o saldo).
-- **Payouts en lote** (rama `multipayment`): los pagos retenidos mientras la wallet tiene tx sin confirmar se pagan juntos en una tx, un output por swap. Minería repartida en proporción al tope de cada usuario (2× pagarlo solo): nadie paga los inputs de otro y nadie pasa su tope. El que no entra en el saldo se reembolsa (no espera al lote siguiente); misma dirección dos veces → el segundo va en el lote siguiente. `MAX_PAYOUT_BATCH=10` (1 = de a uno, como antes). Que los usuarios de un lote vean los outputs de los demás **no importa** (decisión del usuario). Si los lotes dan problemas, el plan es **rollback del código** (por eso está en una rama aparte), no un fallback en runtime.
+- Minería: **la paga siempre el usuario, a la tasa del momento**: estimación de LND de la tx real + 20 % (`MINER_FEE_MARGIN`), en partes iguales; lo cobrado de más queda para la casa. Sin topes ni reescritura del PSBT (LND no tiene "subtract fee from outputs"). Nada de vbytes hardcodeados.
+- **Payouts juntos** (rama `multipayment`): todos los pagos retenidos se pagan en una tx, un output por swap. Estados `PENDING` → `INVOICE_HOLD` → `SUCCESS` (sin `SETTLING`/`PAID`/`SIGNED`/`BROADCASTED`: el payout es atómico dentro de una vuelta). El que no entra en el saldo y **todos los que llegaron después** se reembolsan; misma dirección dos veces → el más nuevo se reembolsa. Sin tope por tx: lo acota `MAX_PENDING_SWAPS` (≤ 1000, para que la tx sea estándar). Sin margen de CLTV: una espera es de ~20 min, no días; si LND cancelara un HTLC, el settle falla → fatal. Que los usuarios de una tx vean los outputs de los demás **no importa** (decisión del usuario). Si da problemas, el plan es **rollback del código** (por eso está en una rama aparte), no un fallback en runtime.
 - Detección de pagos: **polling síncrono desde el hilo worker**, `LookupInvoice` de cada `PENDING` de a una, cada `INVOICE_POLL_INTERVAL_SECONDS` (60 s, decidido por el usuario). Tope `MAX_PENDING_SWAPS`. Sin suscripciones. Implementado.
 - Sitio web: **lo sirve otro servidor** (nginx de `web/`). FastAPI no sirve archivos del front: solo redirige `GET /` (y HEAD) a `FRONTEND_URL`. El front lee `/api/info`.
 - Boltz está caído (desde agosto de 2026); no contarlo como opción de reposición.
@@ -63,12 +66,12 @@ Invariantes (ver `app/worker.py`):
 |---|---|
 | `app/lnurl.py` | Endpoints LNURL-pay (`/.well-known/lnurlp/{addr}`, `/lnurlp/cb`), handlers sync, `Access-Control-Allow-Origin: *` (LUD-01) |
 | `app/swaps.py` | `create_swap` |
-| `app/worker.py` | Máquina de estados por lote y polling de invoices; único componente que mueve plata |
+| `app/worker.py` | Polling de invoices y payout de los retenidos en una tx; único componente que mueve plata |
 | `app/lnd.py` | Cliente gRPC; `LndUnavailable` vs `LndError` |
-| `app/tx.py` | Parser estricto de tx (txid, inputs, outputs) y reescritura de montos en el PSBT v0 sin firmar |
+| `app/tx.py` | Parser estricto de tx (txid, inputs, outputs, vsize) |
 | `app/validator.py` | Direcciones → scriptPubKey. Swaps nuevos: **solo bech32 v0 y bech32m v1** (`validate_bitcoin_address`; la Lightning Address va en minúsculas, LUD-16, y base58 distingue mayúsculas). `address_to_script` sigue decodificando base58 para no trabar el payout de un swap ya guardado |
 | `app/fees.py` | Tasa de minería (sat/kw → sat/vB) y `calculate_gross` (enteros, basis points). No hay tamaño de tx fijo: la minería sale de la tx real |
-| `app/halt.py` | `FatalSwapError`, `halt_process` |
+| `app/halt.py` | `FatalSwapError` (uno o varios swaps), `halt_process` |
 | `app/info.py` | `GET /` → redirect a `FRONTEND_URL`; `GET /api/info` (parámetros de la instancia, commit) |
 | `web/` | Sitio estático React + Vite (multi-página), servido por su propio nginx. Ver `web/CLAUDE.md` y README |
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
@@ -119,8 +122,8 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 11. Aviso cuando el saldo on-chain gastable baja de un umbral (la reposición en sí es manual).
 
 **Para charlar**
-12. Seguimiento de confirmaciones (`BROADCASTED` es terminal; una tx trabada no se detecta).
+12. Seguimiento de confirmaciones (`SUCCESS` es terminal; una tx trabada no se detecta).
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
-14. **Wallet con una tx que nunca confirma frena todos los payouts** (baja prioridad: al atacante le cuesta plata y no gana nada). Ataque: mandar una tx chica a nuestra dirección de cambio (visible en cualquier payout) y reemplazarla por RBF; btcwallet puede seguir mostrándola sin confirmar para siempre. Lo mismo pasa sin atacante si nuestro payout se traba por una suba de minería. Efecto: cada pago queda retenido ~16 h (margen CLTV) y después se reembolsa, los HTLC traban canales y siguen entrando órdenes. No se pierden fondos. Opciones: frenar solo por txs que gastan UTXOs propios (`previous_outpoints[].is_our_output`; los depósitos sin confirmar no afectan con `ONCHAIN_MIN_CONFS=1`), 503 en `create_swap` cuando el worker lleva X min frenado, tope de espera menor que el CLTV, alerta (6). Remedio manual: `lncli wallet removetx`.
+14. **Wallet con una tx que nunca confirma frena todos los payouts** (baja prioridad: al atacante le cuesta plata y no gana nada). Ataque: mandar una tx chica a nuestra dirección de cambio (visible en cualquier payout) y reemplazarla por RBF; btcwallet puede seguir mostrándola sin confirmar para siempre. Lo mismo pasa sin atacante si nuestro payout se traba por una suba de minería. Efecto: los pagos quedan retenidos hasta que LND cancela los HTLC cerca de su vencimiento, y eso es fatal (`MANUAL_REVIEW`); mientras tanto los HTLC traban canales. No se pierden fondos. Opciones: frenar solo por txs que gastan UTXOs propios (`previous_outpoints[].is_our_output`; los depósitos sin confirmar no afectan con `ONCHAIN_MIN_CONFS=1`), 503 en `create_swap` cuando el worker lleva X min frenado, tope de espera menor que el CLTV, alerta (6). Remedio manual: `lncli wallet removetx`.
 
 Orden propuesto: 9 (testnet4) → 5 → 6, 11 → 7, 8; el 4 según lo que muestre la prueba. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)

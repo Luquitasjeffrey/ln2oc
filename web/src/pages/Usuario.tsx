@@ -161,7 +161,7 @@ export default function Usuario() {
             </h3>
             {" "}
             <p>
-              Con el pago ya cobrado, el nodo firma tu transacción, la guarda y la publica. Tu cold wallet la ve en el mempool, y queda tuya de verdad con las confirmaciones.
+              Con el pago ya cobrado, el nodo arma, firma y publica tu transacción en el mismo paso. Tu cold wallet la ve en el mempool, y queda tuya de verdad con las confirmaciones.
             </p>
             {" "}
             <span className="wallet chain">
@@ -179,12 +179,12 @@ export default function Usuario() {
           Dos descuentos y nada más: la comisión fija del servicio y la minería de tu transacción. La minería se calcula recién cuando se firma tu tx: su tamaño real por la tasa de ese momento.
         </p>
         <div className="formula">
-          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − vB de tu tx × sat/vB al firmar
+          payout = ⌊ monto × (1 − {x.feePct}) ⌋ − tu parte de (minería estimada × 1,2)
         </div>
         <p>
           Por ejemplo, con {fmt(x.amount)} sats, una tx de {x.vbytes} vB{x.measured ? " (lo que pesó el último payout)" : ""} y {x.live ? "la tasa de ahora" : "una tasa de"}, {fmt(x.rate)} sat/vB: {fmt(x.amount)} − {fmt(x.fee)} − {fmt(x.miner)} ≈{" "}
           <b className="btc num">{fmt(x.payout)} sats</b>
-          . El número exacto se sabe al firmar: la tasa de ese momento, pero nunca más del doble de la minería estimada cuando llega tu pago. La minería se descuenta siempre de tu pago: el servicio no gana ni pierde con ella, se queda solo con la comisión. Si al llegar tu pago, aun con ese tope, la minería pudiera dejar tu payout por debajo del dust ({fmt(x.info.min_payout_sat)} sats), se cancela la invoice y tus sats no salen de tu wallet.
+          . El número exacto se sabe al enviar tu pago: el nodo estima la minería de la tx real a la tasa de ese momento, se le suma un 20 % y se reparte en partes iguales entre los pagos de esa tx. La minería se descuenta siempre de tu pago, y lo cobrado de más queda para el servicio: nunca pierde con ella. Si con tu parte el payout quedara por debajo del dust ({fmt(x.info.min_payout_sat)} sats), se cancela la invoice y tus sats no salen de tu wallet.
         </p>
       </section>
       <section aria-labelledby="h-what">

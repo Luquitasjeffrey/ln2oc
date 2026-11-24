@@ -42,20 +42,20 @@ export function mountFlow(root) {
         { k: "invoice", a: 6,    b: 11,   step: "Paso 1",        title: "Pedir la invoice",
           cap: "Tu wallet pide la invoice. El nodo genera un secreto, el preimage, y emite una hold invoice atada a su hash." },
         { k: "pay",     a: 11,   b: 16.5, step: "Paso 2",        title: "El pago queda retenido",
-          cap: "Pagás. El HTLC llega y la invoice pasa a ACCEPTED: la plata está retenida, nadie la cobró todavía. El worker lo ve en su próxima consulta de invoices pendientes (LookupInvoice)." },
+          cap: "Pagás. El HTLC llega y la invoice pasa a ACCEPTED: la plata está retenida, nadie la cobró todavía. El worker lo ve en su próxima consulta de invoices pendientes (LookupInvoice) y el swap pasa a INVOICE_HOLD." },
         { k: "check",   a: 16.5, b: 20,   step: "Paso 3",        title: "Chequear el saldo",
-          cap: "Con la invoice en ACCEPTED, si la wallet on-chain tiene alguna tx sin confirmar el worker espera, sin chequear ni cancelar nada. Todos los pagos retenidos mientras tanto entran juntos en un mismo lote. Después le pide a LND que simule tu tx, sin reservar nada: alcanza el saldo para todo el lote y la minería no deja tu payout en dust. No se firma nada todavía." },
+          cap: "Si la wallet on-chain tiene alguna tx sin confirmar, el worker no hace nada y espera. Con la wallet quieta, todos los pagos retenidos van juntos en una tx, del más viejo al más nuevo, mientras entren en el saldo. La minería es la estimación de LND + 20 %, en partes iguales, y no puede dejar tu payout en dust. No se firma nada todavía." },
         { k: "settle",  a: 20,   b: 24.5, step: "Paso 4",        title: "Cobrar con el preimage",
-          cap: "El nodo revela el preimage, cobra y espera a que LND confirme SETTLED. Recién ahora la plata Lightning es del operador." },
-        { k: "fund",    a: 24.5, b: 30.5, step: "Paso 5",        title: "Firmar y guardar",
-          cap: "Con la invoice SETTLED se fija la minería: tasa de ese momento (tope: 2× lo estimado antes de cobrar) y tamaño real de la tx, que sale de tu output. Si en el lote hay otros pagos, una sola tx paga a todos y la minería se reparte según lo que pesaría cada payout solo. FinalizePsbt firma; la tx se verifica y se guarda antes de transmitirla." },
+          cap: "El nodo revela el preimage y cobra: LND tiene que confirmar SETTLED al instante. Recién ahora la plata Lightning es del operador." },
+        { k: "fund",    a: 24.5, b: 30.5, step: "Paso 5",        title: "Armar y firmar",
+          cap: "En la misma vuelta, FundPsbt arma la tx con tu payout ya neto de minería (y los de los demás pagos retenidos) y FinalizePsbt la firma. La tx se verifica: cada destino una vez con su monto y la minería real nunca por encima de lo cobrado." },
         { k: "publish", a: 30.5, b: 36,   step: "Paso 6",        title: "Publicar y confirmar",
-          cap: "Se publica exactamente esa tx: reintentarla siempre es seguro. Entra en un bloque y los sats son tuyos, con tus llaves." },
+          cap: "Se publica esa tx y el swap pasa a SUCCESS. Si algo falla desde el cobro, el servicio se frena y lo revisa una persona: nunca se reintenta a ciegas. Entra en un bloque y los sats son tuyos, con tus llaves." },
         { k: "ledger",  a: 36,   b: 42,   step: "Balance",       title: "Quién terminó con qué",
           cap: "Nadie creó sats: cambiaron de capa. El operador gana la comisión y vos tenés tus sats en frío." },
       ],
-      chips: ["PENDING", "SETTLING", "PAID", "SIGNED", "BROADCASTED"],
-      chipAt: [[9.5, 0], [16.5, 1], [22.6, 2], [28.7, 3], [33.3, 4]],
+      chips: ["PENDING", "INVOICE_HOLD", "SUCCESS"],
+      chipAt: [[9.5, 0], [14, 1], [33.3, 2]],
       inv: ["OPEN", "ACCEPTED", "SETTLED"], invAt: [[9.5, 0], [14, 1], [22.5, 2]],
     },
     fail: {
@@ -69,14 +69,14 @@ export function mountFlow(root) {
         { k: "pay",     a: 11,   b: 16.5, step: "Paso 2",        title: "El pago queda retenido",
           cap: "Pagás. El HTLC llega y la invoice pasa a ACCEPTED: la plata está retenida, nadie la cobró todavía." },
         { k: "fail",    a: 16.5, b: 21.5, step: "Paso 3",        title: "No hay saldo",
-          cap: "Con la invoice en ACCEPTED, el worker mira el saldo on-chain y no alcanza. No se cobró, no se firmó y no salió nada a la red." },
+          cap: "Con la invoice en ACCEPTED, el worker mira el saldo on-chain y no alcanza: tu pago y los que llegaron después se cancelan. No se cobró, no se firmó y no salió nada a la red." },
         { k: "refund",  a: 21.5, b: 26,   step: "Paso 4",        title: "Cancelar y reembolsar",
           cap: "El nodo cancela la hold invoice y pasa a CANCELED. El HTLC se deshace: los sats nunca se cobraron y siguen en la wallet del pagador." },
         { k: "ledger",  a: 26,   b: 31,   step: "Balance",       title: "Quién terminó con qué",
           cap: "Nadie pierde nada. Ese es el trato de la hold invoice: sin fondos on-chain, no hay cobro." },
       ],
-      chips: ["PENDING", "SETTLING", "CANCELING", "FAILED"],
-      chipAt: [[9.5, 0], [16.5, 1], [19, 2], [24.5, 3]],
+      chips: ["PENDING", "INVOICE_HOLD", "FAILED"],
+      chipAt: [[9.5, 0], [14, 1], [22.85, 2]],
       inv: ["OPEN", "ACCEPTED", "CANCELED"], invAt: [[9.5, 0], [14, 1], [22.85, 2]],
     },
   };
@@ -405,7 +405,7 @@ export function mountFlow(root) {
     ctx.font = `600 13px ${MONO}`;
     chips.forEach((c, i) => {
       const w = widths[i], active = i === idx, done = i < idx;
-      const bad = c === "CANCELING" || c === "FAILED" || c === "CANCELED";
+      const bad = c === "FAILED" || c === "CANCELED";
       const last = i === chips.length - 1;
       const col = active ? (bad ? C.red : c === "ACCEPTED" ? C.yellow : last ? C.green : C.blue) : done ? C.dim : C.faint;
       rr(x, y - 15, w, 30, 15);

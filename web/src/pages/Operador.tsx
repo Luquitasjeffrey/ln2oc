@@ -521,7 +521,7 @@ export default function Operador() {
               Varios medianos, no uno gigante
             </h3>
             <p>
-              Se paga un lote a la vez (todos los pagos retenidos juntos, en una tx, hasta MAX_PAYOUT_BATCH) y por defecto solo se gastan UTXOs confirmados. Con un único UTXO, el cambio queda sin confirmar y pagás más o menos un lote por bloque. Con muchos UTXOs chicos, la tx pesa más y los swaps se cancelan por fee.
+              Todos los pagos retenidos se pagan juntos, en una tx, y con cualquier tx de la wallet sin confirmar no se paga nada: más o menos un payout por bloque. Por defecto solo se gastan UTXOs confirmados. Con muchos UTXOs chicos, la tx pesa más y los usuarios pagan más minería.
             </p>
           </div>
         </div>

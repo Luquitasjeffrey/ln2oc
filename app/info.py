@@ -100,7 +100,7 @@ def info():
         "min_swap_sat": settings.MIN_SWAP_SAT,
         "max_swap_sat": settings.MAX_SWAP_SAT,
         "min_payout_sat": settings.MIN_PAYOUT_SAT,
-        # The miner fee is set when the payout is signed: real tx, rate of that moment.
+        # The miner fee is set when the payout is sent: LND's estimate for the real tx + 20 %.
         # These are only the current rate and the per-user size of the last real payout, as an example.
         "fee_rate_sat_vb": rate,
         "last_payout_vbytes": _last_payout_vbytes(),

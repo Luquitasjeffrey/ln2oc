@@ -38,7 +38,6 @@ _DEFINITIVE_CODES = {
 }
 
 InvoiceState = ln.Invoice.InvoiceState
-HtlcState = ln.InvoiceHTLCState
 
 
 class LndUnavailable(Exception):
@@ -216,14 +215,6 @@ class LndClient:
         """Signs the PSBT and returns the raw final tx. Nothing is broadcast."""
         _, _, wallet = self._stubs()
         return self._call(wallet.FinalizePsbt, wk.FinalizePsbtRequest(funded_psbt=funded_psbt), "FinalizePsbt")
-
-    def list_leases(self) -> list:
-        _, _, wallet = self._stubs()
-        return list(self._call(wallet.ListLeases, wk.ListLeasesRequest(), "ListLeases").locked_utxos)
-
-    def release_output(self, lock_id: bytes, outpoint: ln.OutPoint) -> None:
-        _, _, wallet = self._stubs()
-        self._call(wallet.ReleaseOutput, wk.ReleaseOutputRequest(id=lock_id, outpoint=outpoint), "ReleaseOutput")
 
     def publish_transaction(self, raw_tx: bytes, label: str) -> str:
         """Returns publish_error ("" on success). Errors may also come as LndError."""

@@ -18,29 +18,20 @@ class SwapStatus(str, enum.Enum):
     Swap lifecycle. The worker is the only writer after PENDING; every transition is
     a compare-and-set on the current status (see worker._transition).
 
-        PENDING ──(invoice ACCEPTED)──► SETTLING ──(invoice SETTLED)──► PAID ──(tx signed, stored)──► SIGNED ──► BROADCASTED
-           │                              │  only checks on-chain balance     │                          (publish stored tx,
-           │                              │  + CLTV margin, then settles      │ funds + signs only now      idempotent retry)
-           ▼                              ▼
-        EXPIRED (never paid)           CANCELING ──► FAILED (hold invoice canceled: payer keeps their sats)
+        PENDING ─(paid: invoice ACCEPTED)─► INVOICE_HOLD ─(settle + payout tx sent, same tick)─► SUCCESS
+           │                                    │
+           ▼                                    ▼
+        EXPIRED (never paid)                 FAILED (refunded: hold invoice canceled)
 
-        Payouts go in batches: the held payments taken together share a batch_id, are
-        settled one by one and paid by ONE tx (one output each). Only one batch in flight.
-
-        From PAID on, the operator holds the payer's money: failures there are never
-        refunded automatically, they go to MANUAL_REVIEW.
-
-        MANUAL_REVIEW: an invariant protecting funds broke. Service halts and refuses
-                       to start until an operator resolves it.
+        MANUAL_REVIEW: anything outside the rules (an invariant broke, or an edge case
+                       nobody handles yet). The service halts and refuses to start
+                       until an operator resolves it.
     """
-    PENDING = "PENDING"          # hold invoice issued, waiting for payment
-    SETTLING = "SETTLING"        # payment held; balance checked, settling the invoice
-    PAID = "PAID"                # invoice SETTLED (LN money is ours); must fund + sign the payout
-    SIGNED = "SIGNED"            # signed payout tx stored (NOT broadcast yet)
-    BROADCASTED = "BROADCASTED"  # payout tx accepted by LND/mempool (terminal)
-    CANCELING = "CANCELING"      # decided to refund: cancel hold invoice (+ release leases)
-    FAILED = "FAILED"            # hold invoice canceled, nothing paid on-chain (terminal)
-    EXPIRED = "EXPIRED"          # invoice expired/canceled unpaid (terminal)
+    PENDING = "PENDING"                # hold invoice issued, waiting for payment
+    INVOICE_HOLD = "INVOICE_HOLD"      # paid, hold invoice ACCEPTED: waits for the next payout
+    SUCCESS = "SUCCESS"                # invoice settled and payout tx sent (terminal)
+    FAILED = "FAILED"                  # refunded: hold invoice canceled, payer keeps their sats (terminal)
+    EXPIRED = "EXPIRED"                # invoice expired/canceled unpaid (terminal)
     MANUAL_REVIEW = "MANUAL_REVIEW"
 
 
@@ -57,17 +48,12 @@ class Swap(Base):
     btc_address = Column(String(128), nullable=False)
     amount_sat = Column(BigInteger, nullable=False)
     gross_sat = Column(BigInteger, nullable=False)  # amount - service fee: payout + miner fee come out of it
-    max_miner_fee_sat = Column(BigInteger, nullable=True)  # set before settling: cap on the payout's miner fee
-    payout_sat = Column(BigInteger, nullable=True)  # set when signing: gross_sat - actual_fee_sat
-    fee_rate_sat_vb = Column(Integer, nullable=True)  # effective rate of the payout tx
+    payout_sat = Column(BigInteger, nullable=True)  # set on SUCCESS: gross_sat - actual_fee_sat
+    fee_rate_sat_vb = Column(Integer, nullable=True)  # rate the payout tx was funded at
     invoice = Column(Text, nullable=False)
-    # Payout batch: set when the swap leaves PENDING (held payment taken for a payout).
-    # Every swap in flight shares one batch_id, which is also the LND UTXO lease id of the
-    # batched payout tx (one tx paying every swap of the batch).
-    batch_id = Column(String(64), nullable=True, index=True)
 
-    # Payout transaction (set in PAID -> SIGNED, never changed afterwards). Shared by every
-    # swap of the batch: the same tx pays all of them, one output each.
+    # Payout transaction (set on SUCCESS). Shared by every swap paid in the same tick:
+    # one tx pays all of them, one output each.
     raw_tx = Column(Text, nullable=True)  # hex
     txid = Column(String(64), nullable=True, index=True)
     actual_fee_sat = Column(BigInteger, nullable=True)  # this swap's share of the miner fee

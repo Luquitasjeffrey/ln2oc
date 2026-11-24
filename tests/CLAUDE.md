@@ -13,12 +13,13 @@ Credenciales en `/home/lucas/.polar/networks/3/volumes/lnd/<Nodo>/`. **Cada corr
 ## Patrones
 
 - `env` (fixture): DB SQLite nueva en `tmp_path` y un `SwapWorker` cuyo `on_fatal` solo registra el motivo en vez de matar el proceso.
-- `insert_swap(Session, amount_sat, gross_sat, address)`: crea una hold invoice real en Kross y la fila `PENDING`, salteando las validaciones de `create_swap`. La minería no se guarda: se fija al firmar.
-- Para controlar la tasa al firmar: monkeypatchear `app.worker.current_fee_rate_sat_per_vbyte` (la 1ª llamada es el chequeo antes del settle, la 2ª la firma). `_spike_after_settle` simula una suba después del settle (se paga hasta el tope `max_miner_fee_sat`).
+- `insert_swap(Session, amount_sat, gross_sat, address)`: crea una hold invoice real en Kross y la fila `PENDING`, salteando las validaciones de `create_swap`. La minería no se guarda: se cobra al pagar.
 - `tick_until(env, swap_id, statuses)`: avanza a mano un worker que no corre en un hilo; cada tick es un barrido completo de las `PENDING` (`run_tick_guarded()` con `poll_pending=True` por defecto).
-- `_polling_worker(env, poll_interval)`: worker real en su hilo. Con `poll_interval=300` solo el barrido inicial ve los pagos, lo que sirve para probar que los pagos retenidos que esperan el slot avanzan por el retry rápido y no por el próximo barrido.
-- `ambiguous_once(real)`: ejecuta la llamada real a LND y después tira `LndUnavailable`, simulando una respuesta perdida. Con eso se prueba que nunca se paga dos veces.
-- `assert_paid_exactly_once`: verifica en bitcoind que el destino recibió exactamente el payout una sola vez, que la invoice quedó `SETTLED` y que los leases (id = `batch_id`) son solo los de esa tx.
-- Lotes (`test_batch_payouts.py`): `_held_while_wallet_busy(env, payer, grosses)` deja un depósito sin confirmar, paga un swap por gross (quedan retenidos en `PENDING`), y mina: el tick siguiente arma el lote. `_tick_all` avanza hasta que todos terminan y `_assert_one_tx_pays` verifica una sola tx con un output por swap. Para achicar el saldo visto antes del settle: monkeypatchear `SwapWorker._spendable_sat`.
+- `_polling_worker(env, poll_interval)`: worker real en su hilo. Con `poll_interval=300` solo el barrido inicial ve los pagos.
+- `ambiguous_once(real)`: ejecuta la llamada real a LND y después tira `LndUnavailable`, simulando una respuesta perdida. Desde el primer settle eso tiene que terminar en `MANUAL_REVIEW`, nunca en un reintento.
+- `_ProcessDied` (`BaseException`): se escapa de `run_tick_guarded` como un `kill -9`, para probar caídas a mitad del payout.
+- `assert_paid_exactly_once`: verifica en bitcoind que el destino recibió exactamente el payout una sola vez, que payout + minería cobrada = gross y que la invoice quedó `SETTLED`.
+- Varios pagos en una tx (`test_payout_rules.py`): `_held_while_wallet_busy(env, payer, grosses)` deja un depósito sin confirmar, paga un swap por gross (quedan en `INVOICE_HOLD`) y mina: el tick siguiente los paga juntos. `_tick_all` avanza hasta que todos terminan y `_assert_one_tx_pays` verifica una sola tx con un output por swap más el cambio. Para achicar el saldo: monkeypatchear `SwapWorker._spendable_sat`.
 - Después de cada payout, `mine_blocks(1)`: el siguiente pago espera retenido hasta que no quede ninguna tx de la wallet sin confirmar. El fixture `env` mina un bloque al arrancar si quedó alguna (p. ej. de un run abortado). `send_to_kross_unconfirmed(btc)` genera un depósito entrante sin confirmar.
 - Monkeypatchear métodos de `lnd_client` (instancia global) para inyectar fallos; `monkeypatch.undo()` si el test necesita después la llamada real.
+- Un fatal después de fondear deja UTXOs leaseados ~10 min (`_LEASE_SECONDS`): si el test publica la tx a mano para limpiar (como `test_publish_rejected_is_fatal`), se gastan.
