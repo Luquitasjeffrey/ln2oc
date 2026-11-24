@@ -35,16 +35,16 @@ PENDING ──(invoice ACCEPTED)──► INVOICE_HOLD ──(settle + tx enviad
 EXPIRED (nunca se pagó)          FAILED (invoice cancelada, el pagador no pierde nada)
 ```
 
-1. **LNURL-Pay**: valida la dirección y el monto y guarda `gross_sat` = monto − comisión. **No estima minería** y **no reserva saldo**: si el saldo gastable ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez.
+1. **LNURL-Pay**: valida la dirección y el monto y guarda `gross_sat` = monto − comisión. **No estima minería** y **no reserva saldo**: si el saldo gastable menos `ONCHAIN_RESERVE_SAT` ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez.
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
 3. **Pago retenido**: el polling ve la invoice `ACCEPTED` → `INVOICE_HOLD`.
 4. **Cada vuelta**, si la wallet on-chain tiene alguna tx sin confirmar (entrante o saliente, incluido el payout anterior), no se hace nada más. Si no, se pagan **todos** los `INVOICE_HOLD` en **una sola tx** (un output por swap), del más viejo al más nuevo:
    - una dirección que ya está en la tx → `FAILED` (reembolso);
    - se acumula `gross_sat` mientras entre en el saldo gastable menos `ONCHAIN_RESERVE_SAT` (10k: así el cambio nunca queda en dust); desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
-   - minería: la estimación de LND para esa tx (`EstimateFee`, a la tasa del momento) **+ 20 %**, repartida en partes iguales. Lo cobrado de más queda en el cambio (para la casa). Si un payout queda en dust → `FAILED`.
+   - minería: la estimación de LND para esa tx (`EstimateFee`, a la tasa del momento) **+ 20 %**, repartida en partes iguales. Lo cobrado de más queda en el cambio (para la casa). Si un payout queda en dust → `FAILED`. Si LND no puede leer el saldo o estimar la tx (p. ej. *insufficient funds*: el bruto entra pero bruto + minería no) → `MANUAL_REVIEW`, sin haber cobrado nada.
 
    $$\text{payout} = \text{gross\_sat} - \left\lceil \frac{1{,}2 \times \text{minería estimada de la tx}}{\text{swaps en la tx}} \right\rceil$$
-5. **Settle** de cada invoice, `FundPsbt` con los payouts, `FinalizePsbt`, verificación independiente (cada destino una sola vez con su payout, a lo sumo un output de cambio, inputs = los UTXOs que LND reservó, minería real ≤ lo cobrado), publicación y `SUCCESS` con el txid y la raw tx. Todo en la misma vuelta: **cualquier falla desde el primer settle → `MANUAL_REVIEW`** (*USER IS OWED*), sin reintentos.
+5. **Settle** de cada invoice, `FundPsbt` con los payouts a la misma tasa de LND que usó `EstimateFee` (mismo `target_conf`, sin truncarla a sat/vB enteros), `FinalizePsbt`, verificación independiente (cada destino una sola vez con su payout, a lo sumo un output de cambio, inputs = los UTXOs que LND reservó, minería real ≤ lo cobrado), publicación y `SUCCESS` con el txid y la raw tx. Todo en la misma vuelta: **cualquier falla desde el primer settle → `MANUAL_REVIEW`** (*USER IS OWED*), sin reintentos.
 
 Garantías:
 - Cada transición es un compare-and-set sobre el estado guardado.
@@ -54,7 +54,7 @@ Garantías:
 
 ### 🚨 `MANUAL_REVIEW`
 
-Todo lo que no es una regla de negocio (la invoice se settleó por fuera del flujo, una respuesta de LND perdida, el fondeo o la publicación fallan **después** del settle, en cuyo caso **se le debe el payout al usuario**) deja los swaps involucrados en `MANUAL_REVIEW` con el motivo en la columna `error`, y el proceso termina. **El servicio no arranca mientras exista algún swap en ese estado.** Para resolverlo: revisar el caso en LND/bitcoind (la raw tx de cada payout queda en el log antes de publicarse), actuar a mano y recién entonces cambiar el estado en la DB.
+Todo lo que no es una regla de negocio (la invoice se settleó por fuera del flujo, una respuesta de LND perdida, LND que no puede leer el saldo o estimar el payout antes del settle, el fondeo o la publicación fallan **después** del settle, en cuyo caso **se le debe el payout al usuario**) deja los swaps involucrados en `MANUAL_REVIEW` con el motivo en la columna `error`, y el proceso termina. **El servicio no arranca mientras exista algún swap en ese estado.** Para resolverlo: revisar el caso en LND/bitcoind (la raw tx de cada payout queda en el log antes de publicarse), actuar a mano y recién entonces cambiar el estado en la DB.
 
 ---
 
@@ -190,8 +190,8 @@ Los tests corren contra Polar (Kross gRPC `10001`, User gRPC `10002`, bitcoind `
 - **Flujo end-to-end completo** con verificación en bitcoind de que el destino recibió exactamente el payout una sola vez.
 - **Reembolso** (invoice cancelada) cuando no hay saldo al momento del pago, cuando el payout quedaría en dust o cuando la tasa supera `MAX_SAT_PER_VBYTE`.
 - **Nada on-chain antes del cobro**: `FundPsbt` solo se llama con la invoice ya `SETTLED`. El usuario paga la estimación de LND + 20 % y la minería real queda por debajo.
-- **Varios pagos en una tx** (`tests/test_payout_rules.py`): retenidos mientras la wallet tiene una tx sin confirmar, después se pagan juntos; desde el primero que no entra en el saldo se reembolsan todos los que siguen; una dirección repetida se reembolsa.
-- **Pánicos controlados**: invoice settleada por fuera del flujo, caída después del settle, respuesta perdida de LND (settle, fondeo, firma o publicación), publicación rechazada → `MANUAL_REVIEW` y el worker no procesa nada más.
+- **Varios pagos en una tx** (`tests/test_payout_rules.py`): retenidos mientras la wallet tiene una tx sin confirmar, después se pagan juntos; desde el primero que no entra en el saldo se reembolsan todos los que siguen; nunca se paga la reserva `ONCHAIN_RESERVE_SAT`; una dirección repetida se reembolsa.
+- **Pánicos controlados**: invoice settleada por fuera del flujo, LND que rechaza la estimación del payout antes del settle (la invoice queda `ACCEPTED`), caída después del settle, respuesta perdida de LND (settle, fondeo, firma o publicación), publicación rechazada → `MANUAL_REVIEW` y el worker no procesa nada más.
 - **Worker real por polling**: detecta pagos retenidos al arrancar, swaps nuevos e invoices canceladas.
 
 ---
