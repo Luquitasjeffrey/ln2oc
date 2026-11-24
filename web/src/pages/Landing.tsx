@@ -140,7 +140,7 @@ export default function Landing() {
               Firma tu tx y la publica
             </b>
             <span>
-              Con el pago ya cobrado, firma tu payout, lo guarda y lo publica. Llega a tu cold wallet en el próximo bloque.
+              Con el pago ya cobrado, firma tu payout y lo publica en el mismo paso. Si llegaron otros pagos a la vez, una misma tx les paga a todos. Llega a tu cold wallet en el próximo bloque.
             </span>
           </li>
         </ol>
