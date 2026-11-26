@@ -235,12 +235,12 @@ class SwapWorker:
         total = 0
         for i, swap in enumerate(held):
             if swap.btc_address in {s.btc_address for s in taken}:
-                self._refund(db, swap, "another held payment of this payout pays the same address")
+                self._cancel_swap(db, swap, "another held payment of this payout pays the same address")
             elif total + swap.gross_sat > spendable - settings.ONCHAIN_RESERVE_SAT:
                 for late in held[i:]:
-                    self._refund(db, late, f"insufficient on-chain balance: {spendable} sat spendable, "
-                                           f"{settings.ONCHAIN_RESERVE_SAT} sat reserve, "
-                                           f"{total} sat taken by earlier payments")
+                    self._cancel_swap(db, late, f"insufficient on-chain balance: {spendable} sat spendable, "
+                                                f"{settings.ONCHAIN_RESERVE_SAT} sat reserve, "
+                                                f"{total} sat taken by earlier payments")
                 break
             else:
                 taken.append(swap)
@@ -256,16 +256,16 @@ class SwapWorker:
                 raise FatalSwapError([s.id for s in taken], f"unusable fee estimate from LND: {est}")
             if est.sat_per_vbyte > settings.MAX_SAT_PER_VBYTE:
                 for swap in taken:
-                    self._refund(db, swap, f"miner fee rate {est.sat_per_vbyte} sat/vB above "
-                                           f"MAX_SAT_PER_VBYTE={settings.MAX_SAT_PER_VBYTE}")
+                    self._cancel_swap(db, swap, f"miner fee rate {est.sat_per_vbyte} sat/vB above "
+                                                f"MAX_SAT_PER_VBYTE={settings.MAX_SAT_PER_VBYTE}")
                 return
             share = -(-int(est.fee_sat * MINER_FEE_MARGIN) // len(taken))  # rounded up: never against the house
             dust = [s for s in taken if s.gross_sat - share < settings.MIN_PAYOUT_SAT]
             if not dust:
                 break
             for swap in dust:
-                self._refund(db, swap, f"payout would be {swap.gross_sat - share} sat after a {share} sat miner "
-                                       f"fee share, below dust ({settings.MIN_PAYOUT_SAT} sat)")
+                self._cancel_swap(db, swap, f"payout would be {swap.gross_sat - share} sat after a {share} sat "
+                                            f"miner fee share, below dust ({settings.MIN_PAYOUT_SAT} sat)")
             taken = [s for s in taken if s not in dust]
         if not taken:
             return
@@ -313,7 +313,7 @@ class SwapWorker:
             raise RuntimeError(f"payout tx fee {fee} sat, users charged {charged} sat")
         return tx.txid, fee
 
-    def _refund(self, db: Session, swap: Swap, reason: str) -> None:
+    def _cancel_swap(self, db: Session, swap: Swap, reason: str) -> None:
         """Cancels the hold invoice: the payer keeps their sats."""
         logger.warning("Swap %s: refunding payer: %s", swap.id, reason)
         try:
