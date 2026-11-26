@@ -317,7 +317,7 @@ class SwapWorker:
         """Records the swap as FAILED, then cancels the hold invoice: the payer keeps their
         sats. Any failure of the cancel (LndUnavailable too) is fatal: the swap is already
         FAILED, nothing would retry it."""
-        logger.warning("Swap %s: refunding payer: %s", swap.id, reason)
+        logger.info("Swap %s: refunding payer: %s", swap.id, reason)
         self._transition(db, [swap], SwapStatus.INVOICE_HOLD, SwapStatus.FAILED, error=reason)
         try:
             self.lnd.cancel_invoice(bytes.fromhex(swap.payment_hash))
