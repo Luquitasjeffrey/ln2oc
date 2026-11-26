@@ -110,6 +110,7 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 
 **Decidido y sin implementar**
 3. Macaroon con permisos mínimos (diferido por el usuario).
+15. **Watcher de `FAILED` con la invoice `ACCEPTED`.** `_cancel_swap` guarda `FAILED` y después cancela: si el proceso muere entre los dos pasos, la invoice queda `ACCEPTED` sin que nadie la mire y el HTLC del pagador queda trabado hasta que LND la cancela cerca del CLTV (no se pierden fondos). El watcher revisa los `FAILED` recientes y, si alguno tiene la invoice `ACCEPTED`, loguea un warning en cada vuelta (que moleste, que no se quede callado). **No toca nada**: ni cancela ni frena el proceso; el remedio es manual (`lncli cancelinvoice`). Va con las alertas (6).
 
 **El artifact lo promete y el código no lo cumple del todo**
 4. **`description_hash` en la hold invoice: ya no es obligatorio.** LUD-06 sacó el requisito (lnurl/luds PR #234, mergeado en mayo de 2026). Phoenix y BlueWallet no lo exigen; ZEUS solo rechaza si la invoice trae un `h` que no coincide, y una invoice sin `h` la acepta. Hoy mandamos `memo` sin `h`. Agregarlo (sha256 de la metadata exacta, en `AddHoldInvoice.description_hash`) solo ayudaría con wallets viejas. Baja prioridad; confirmarlo en la prueba de testnet4 (9).
