@@ -86,5 +86,27 @@ services:
     # Let LND close the DB cleanly on stop.
     stop_grace_period: 2m
 
+  # Túnel de Cloudflare (perfil "tunnel"): la única entrada desde afuera. Llega a ln2oc y
+  # web por la red del compose; el ruteo por path está en deploy/cloudflared/config.yml.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    logging: *logging
+    # Same uid as the owner of the credentials file (0400).
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    command: ["tunnel", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./deploy/cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - type: bind
+        source: ${CLOUDFLARED_CREDENTIALS:-/nonexistent/cloudflared-credentials.json}
+        target: /etc/cloudflared/credentials.json
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      - ln2oc
+      - web
+
 volumes:
   ln2oc_data:

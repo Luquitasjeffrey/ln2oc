@@ -80,6 +80,7 @@ Invariantes (ver `app/worker.py`):
 | `scripts/lnaddr_pay.py` | Cliente de prueba: resuelve y valida una Lightning Address como una wallet (LUD-16/06/01) y la paga desde un LND propio |
 | `docs/testnet4.md` | Cómo levantar y probar una instancia en testnet4 |
 | `docs/prod.md` | Producción: checkout en `/home/lucas/ln2oc/prod/`, datos en `prod/data/` (ignorado), servicio `lnd` del compose |
+| `deploy/cloudflared/config.yml` | Ingress del túnel de Cloudflare: LNURL y `/api/` → `ln2oc:8000`, el resto → `web:8080`. Credenciales fuera del repo (`CLOUDFLARED_CREDENTIALS`) |
 | `deploy/lnd/mainnet.conf` | LND de prod: mainnet, neutrino, `fee.url`, `tlsextradomain=lnd`, desbloqueo con `wallet_password`, sin REST ni puertos publicados |
 | `scripts/lnd/` | Wallet de prod: `init-dirs`, `create-wallet`, `recover-wallet` (24 palabras + passphrase), `backup-scb`, `restore-channels`, `lncli`. Nunca pisan una wallet existente |
 | `.env.dev`, `.env.prod` | Muestras de `.env` (regtest/Polar y mainnet). El compose lee `.env` entero (`env_file`); `COMPOSE_PROFILES=lnd` suma el LND |
@@ -123,7 +124,7 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 9. Prueba en testnet4 con wallets reales. Preparada: `BITCOIN_NETWORK=testnet4`, guía en `docs/testnet4.md`, `.env.testnet4.example` y `scripts/lnaddr_pay.py` (paga una Lightning Address como una wallet, contra el dominio real). Falta: nodos, dominio con HTTPS y la prueba en sí. No se confirmó ninguna wallet móvil que pague Lightning Address en testnet4 (candidata: ZEUS remoto contra el LND pagador). Signet no está soportado.
 
 **Operativo**
-10. Nodo (hecho: servicio `lnd` del compose, ver `docs/prod.md`; falta crear la wallet y fondearlo) y dominio dedicados, HTTPS con reverse proxy, `DOMAIN=ln2oc.com`, `EXTERNAL_URL=https://ln2oc.com`.
+10. Nodo (hecho: servicio `lnd` del compose, ver `docs/prod.md`; falta crear la wallet y fondearlo) y dominio dedicados. Dominio y HTTPS hechos: túnel de Cloudflare `ln2oc` (servicio `cloudflared`, perfil `tunnel`). Hoy el túnel lo corre el compose de **dev (regtest)**: `https://ln2oc.com` sirve regtest hasta pasarlo a prod (un solo conector a la vez, ver `docs/prod.md`).
 11. Aviso cuando el saldo on-chain gastable baja de un umbral (la reposición en sí es manual).
 
 **Para charlar**

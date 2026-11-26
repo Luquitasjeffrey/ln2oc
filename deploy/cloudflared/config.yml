@@ -1,0 +1,15 @@
+# Túnel de Cloudflare (servicio "cloudflared" del compose, perfil "tunnel").
+# Rutea por path: lo que es LNURL y la API va a ln2oc; el resto, al sitio.
+# Las credenciales del túnel (JSON de `cloudflared tunnel create`) se montan desde
+# CLOUDFLARED_CREDENTIALS (.env); no se versionan.
+tunnel: ln2oc
+credentials-file: /etc/cloudflared/credentials.json
+no-autoupdate: true
+
+ingress:
+  - hostname: ln2oc.com
+    path: ^/(\.well-known/lnurlp/|lnurlp/|api/)
+    service: http://ln2oc:8000
+  - hostname: ln2oc.com
+    service: http://web:8080
+  - service: http_status:404

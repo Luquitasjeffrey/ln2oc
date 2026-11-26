@@ -20,7 +20,16 @@ Servicios del compose (`COMPOSE_PROJECT_NAME=ln2oc-prod`, `COMPOSE_PROFILES=lnd`
 | `ln2oc` | API + worker; llega a LND por `lnd:10009` | `127.0.0.1:8100` |
 | `web` | sitio estático (nginx) | `127.0.0.1:8180` |
 
-Afuera se entra por el túnel de Cloudflare (pendiente): `/.well-known/lnurlp/`, `/lnurlp/` y `/api/` → `ln2oc:8000`; el resto → `web:8080`.
+| `cloudflared` | túnel de Cloudflare (perfil `tunnel`) | ninguno |
+
+Afuera se entra solo por el túnel: `/.well-known/lnurlp/`, `/lnurlp/` y `/api/` → `ln2oc:8000`; el resto → `web:8080`.
+
+## Túnel de Cloudflare y DNS
+
+- Túnel **manejado localmente** `ln2oc` (`135e26ce-e011-47fe-a969-fb9c23254dac`), creado con `cloudflared tunnel create ln2oc` usando el `~/.cloudflared/cert.pem` de la cuenta. Las credenciales quedan en `~/.cloudflared/135e26ce-….json` (fuera del repo) y se montan desde `CLOUDFLARED_CREDENTIALS`. Ingress versionado en `deploy/cloudflared/config.yml`.
+- **Un solo conector a la vez.** Si dos compose (dev y prod) corren `cloudflared` con las mismas credenciales, Cloudflare reparte el tráfico entre los dos: las Lightning Address caerían a veces en regtest y a veces en mainnet. Al pasar a prod: `docker compose stop cloudflared` en el checkout de dev y sacar `tunnel` de su `COMPOSE_PROFILES`.
+- DNS (zona `ln2oc.com` en Cloudflare; los nameservers de Dynadot ya apuntan ahí): `ln2oc.com` y `www` son CNAME proxied a `135e26ce-….cfargotunnel.com`. Redirect Rule `www` → raíz (301, conserva query). "Always Use HTTPS" prendido. Bot Fight Mode apagado (bloquearía a las wallets que consultan LNURL).
+- No usar `cloudflared tunnel route dns`: el `cert.pem` es de la zona de otro proyecto y crearía el registro ahí.
 
 ## LND
 
@@ -78,7 +87,6 @@ scripts/lnd/restore-channels.sh /ruta/channel.backup     # si había canales
 
 ## Pendiente para salir
 
-- Túnel de Cloudflare + DNS (ruteo por path, Bot Fight Mode apagado en las rutas LNURL).
 - Fondos on-chain al nodo, canal público y liquidez entrante.
 - Ajustar `MAX_SWAP_SAT` a la liquidez real.
 - Macaroon con permisos mínimos (TODO 3), monitor externo de `/api/info`, cron de backup.
