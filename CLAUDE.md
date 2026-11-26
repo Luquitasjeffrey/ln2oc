@@ -44,7 +44,7 @@ Invariantes (ver `app/worker.py`):
 - Un único proceso (lock exclusivo de archivo) y un único hilo worker, que también detecta los pagos (polling síncrono, sin suscripciones); transiciones compare-and-set (`_transition`).
 - El payout es un solo paso dentro de una vuelta: no hay estados intermedios que retomar. Una caída a mitad de camino deja un `INVOICE_HOLD` con la invoice `SETTLED` → fatal en la vuelta siguiente (se resuelve a mano).
 - Nunca se paga sobre cambio sin confirmar: con cualquier tx de la wallet en el mempool no se paga nada (~1 payout por bloque).
-- `LndUnavailable` antes del primer settle → reintento; después → fatal.
+- `LndUnavailable` antes del primer settle → reintento; después → fatal. Excepción: un reembolso primero guarda `FAILED` y después cancela la invoice, así que cualquier falla del cancel → fatal (nadie lo reintentaría).
 - TLS hacia LND siempre verificado (falla cerrado).
 
 ## Decisiones tomadas (no volver a discutir sin que el usuario lo pida)

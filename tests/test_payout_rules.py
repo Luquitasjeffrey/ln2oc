@@ -106,6 +106,26 @@ def test_miner_fee_rate_above_the_max_refunds_everyone(env, payer, monkeypatch):
     assert all(s.status == SwapStatus.FAILED and "MAX_SAT_PER_VBYTE" in s.error for s in done)
 
 
+def test_a_failed_cancel_is_fatal(env, payer, monkeypatch):
+    """The swap is recorded FAILED before the cancel: if the cancel fails, nothing would
+    retry it, so it is MANUAL_REVIEW (the invoice is still ACCEPTED, the payer's HTLC held)."""
+    from app.lnd import LndUnavailable
+    swaps = _held_while_wallet_busy(env, payer, [45_000])
+    monkeypatch.setattr(SwapWorker, "_spendable_sat", lambda self: 0)
+
+    def unavailable(payment_hash):
+        raise LndUnavailable("injected")
+    monkeypatch.setattr(lnd_client, "cancel_invoice", unavailable)
+    done = _tick_all(env, [swaps[0][0]])
+    assert env["fatal"].reasons
+    assert done[0].status == SwapStatus.MANUAL_REVIEW and "[from FAILED]" in done[0].error, done[0].error
+    payment_hash = bytes.fromhex(done[0].payment_hash)
+    assert lnd_client.lookup_invoice(payment_hash).state == InvoiceState.ACCEPTED
+    monkeypatch.undo()
+    lnd_client.cancel_invoice(payment_hash)  # the manual fix: refund the payer
+    assert swaps[0][2].result(timeout=60).payment_error != ""
+
+
 def test_the_onchain_reserve_is_never_paid_out(env, payer, monkeypatch):
     """A payout that would leave less than ONCHAIN_RESERVE_SAT in the wallet is refunded:
     otherwise its change could be dust, LND would add it to the miner fee and the tx

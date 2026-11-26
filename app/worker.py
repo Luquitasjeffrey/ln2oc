@@ -314,13 +314,15 @@ class SwapWorker:
         return tx.txid, fee
 
     def _cancel_swap(self, db: Session, swap: Swap, reason: str) -> None:
-        """Cancels the hold invoice: the payer keeps their sats."""
+        """Records the swap as FAILED, then cancels the hold invoice: the payer keeps their
+        sats. Any failure of the cancel (LndUnavailable too) is fatal: the swap is already
+        FAILED, nothing would retry it."""
         logger.warning("Swap %s: refunding payer: %s", swap.id, reason)
+        self._transition(db, [swap], SwapStatus.INVOICE_HOLD, SwapStatus.FAILED, error=reason)
         try:
             self.lnd.cancel_invoice(bytes.fromhex(swap.payment_hash))
-        except LndError as e:
-            raise FatalSwapError(swap.id, f"cannot cancel hold invoice: {e.message}")
-        self._transition(db, [swap], SwapStatus.INVOICE_HOLD, SwapStatus.FAILED, error=reason)
+        except Exception as e:
+            raise FatalSwapError(swap.id, f"cannot cancel hold invoice: {e!r}")
 
     # ------------------------------------------------------------------ helpers
 
