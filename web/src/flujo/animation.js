@@ -2,18 +2,18 @@
    Imperative canvas code: mounted by <FlowAnimation /> on its root element.
    Returns a cleanup function that stops the loop and removes global listeners. */
 // @ts-nocheck
-export function mountFlow(root) {
+export function mountFlow(root, initial = "user") {
   let disposed = false;
 
   const C = {
-    bg: "#0f1012", ink: "#ece9e1", dim: "#8b8f98", faint: "#3a3e45",
+    bg: "#0d0f16", ink: "#ece9e1", dim: "#8b8f98", faint: "#3a3e45",
     blue: "#58c4dd", yellow: "#f4d345", green: "#83c167", red: "#fc6255", gold: "#f0ac5f",
   };
-  const SERIF = '"STIX Two Text", "Times New Roman", serif';
-  const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace';
+  const SERIF = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+  const MONO = 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
   const W = 1280, H = 720;
 
-  const cv = root.querySelector("#cv");
+  const cv = root.querySelector("[data-flow=canvas]");
   const ctx = cv.getContext("2d");
 
   // ---------------------------------------------------------------- scenarios
@@ -30,6 +30,23 @@ export function mountFlow(root) {
         { k: "u-fail", a: 22, b: 30, step: "Si falla", title: "Tus sats no se mueven",
           cap: "Si el nodo de ln2oc no tiene fondos on-chain, el pago falla y tus sats nunca salen de tu wallet." },
         { k: "u-end",  a: 30, b: 35, step: "", title: "Resumen" },
+      ],
+      chips: [], chipAt: [],
+    },
+    community: {
+      name: "Comunidades",
+      scenes: [
+        { k: "c-hook",  a: 0,  b: 7,  step: "Paso 1", title: "Tu servicio suma un parámetro",
+          cap: "Tu exchange, wallet o sistema de pagos arma la Lightning Address del usuario y, al pedir la invoice, agrega ?community=tu-comunidad. Nada más cambia." },
+        { k: "c-pay",   a: 7,  b: 14, step: "Paso 2", title: "Tu usuario retira on-chain",
+          cap: "El usuario paga por Lightning y sus sats llegan on-chain a su cold wallet. Paga exactamente lo mismo que sin comunidad." },
+        { k: "c-split", a: 14, b: 21, step: "Paso 3", title: "La comisión se reparte",
+          cap: "De la comisión de 0,7 %, el 0,1 % es de tu comunidad. En un retiro de 100.000 sats: 600 para el operador y 100 para vos." },
+        { k: "c-sum",   a: 21, b: 28, step: "Paso 4", title: "Cada retiro suma",
+          cap: "Cada swap exitoso que llega con tu parámetro suma a lo que se te debe. No hay saldo guardado: sale de los swaps exitosos menos lo que ya se te pagó." },
+        { k: "c-paid",  a: 28, b: 34, step: "Paso 5", title: "El operador te paga",
+          cap: "El operador te liquida por Lightning, a una invoice o a tu Lightning Address, y registra el pago. El contador vuelve a cero." },
+        { k: "c-end",   a: 34, b: 39, step: "", title: "Resumen" },
       ],
       chips: [], chipAt: [],
     },
@@ -195,6 +212,7 @@ export function mountFlow(root) {
     ctx.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
     ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
     if (scen === "user") { frameUser(); return; }
+    if (scen === "community") { frameCommunity(); return; }
     const fail = scen === "fail";
 
     // Title card
@@ -624,14 +642,122 @@ export function mountFlow(root) {
     }
   }
 
+
+  function frameCommunity() {
+    const cur = current();
+    if (cur.step) {
+      text(cur.step, 70, 74, { font: `600 15px ${MONO}`, color: C.dim });
+      text(cur.title, 70 + (cur.step.length + 2) * 9.6, 74, { font: `italic 24px ${SERIF}`, color: C.ink });
+    }
+    text("Comunidades", W - 70, 74, { font: `15px ${MONO}`, color: C.dim, align: "right" });
+
+    const show = P("c-hook", 0, 0.25), lab = P("c-hook", 0.1, 0.35);
+    // the community's app
+    panel(MB, 16, PURPLE, show);
+    const X = MB.x + 24;
+    text("Tu comunidad", MB.x + MB.w / 2, MB.y + 46, { font: `600 28px ${SERIF}`, align: "center", alpha: lab });
+    text("exchange P2P · wallet · pagos", MB.x + MB.w / 2, MB.y + 72, { font: `12px ${MONO}`, color: C.dim, align: "center", alpha: lab });
+    text("Retirar on-chain", X, MB.y + 116, { font: `600 18px ${SERIF}`, alpha: lab });
+    text("pide la invoice a", X, MB.y + 148, { font: `12px ${MONO}`, color: C.dim, alpha: lab });
+    text("/.well-known/lnurlp/", X, MB.y + 172, { font: `13px ${MONO}`, color: C.dim, write: P("c-hook", 0.25, 0.4), alpha: lab });
+    text("bc1qmefue372…", X, MB.y + 192, { font: `13px ${MONO}`, color: C.gold, write: P("c-hook", 0.35, 0.5), alpha: lab });
+    text("?community=", X, MB.y + 220, { font: `600 15px ${MONO}`, color: PURPLE, write: P("c-hook", 0.5, 0.62), alpha: lab });
+    text("tu-comunidad", X, MB.y + 242, { font: `600 15px ${MONO}`, color: PURPLE, write: P("c-hook", 0.6, 0.74), alpha: lab });
+    pulse(X + 80, MB.y + 230, P("c-hook", 0.74, 0.92), PURPLE);
+    // owed counter (inside the community panel)
+    const sum = after("c-sum"), paid = after("c-paid", 0.55);
+    let owed = after("c-split", 0.7) ? 100 : 0;
+    if (sum) for (let i = 0; i < 3; i++) if (P("c-sum", 0.15 + i * 0.22, 0.35 + i * 0.22) >= 1) owed += 100;
+    if (paid) owed = 0;
+    const oA = P("c-split", 0.6, 0.8);
+    text("se te debe", X, MB.y + 266, { font: `12px ${MONO}`, color: C.dim, alpha: oA });
+    text(`${owed.toLocaleString("es-AR")} sats`, MB.x + MB.w - 24, MB.y + 266, { font: `600 18px ${SERIF}`, color: paid ? C.green : PURPLE, align: "right", alpha: oA });
+
+    // ln2oc and the cold wallet
+    const sideA = P("c-hook", 0.15, 0.4);
+    ctx.save(); ctx.globalAlpha = sideA * 0.7; ctx.strokeStyle = C.faint; ctx.lineWidth = 2; ctx.setLineDash([6, 7]);
+    ctx.beginPath(); ctx.moveTo(398, 311); ctx.lineTo(528, 311); ctx.moveTo(772, 311); ctx.lineTo(938, 311); ctx.stroke(); ctx.restore();
+    text("Lightning", 462, 300, { font: `12px ${MONO}`, color: C.yellow, align: "center", alpha: sideA });
+    text("on-chain", 855, 300, { font: `12px ${MONO}`, color: C.gold, align: "center", alpha: sideA });
+    panel(BOX, 16, C.blue, sideA);
+    text("ln2oc", BOX.x + BOX.w / 2, BOX.y + 58, { font: `600 30px ${SERIF}`, align: "center", alpha: sideA });
+    text("el operador", BOX.x + BOX.w / 2, BOX.y + 94, { font: `13px ${MONO}`, color: C.dim, align: "center", alpha: sideA });
+    text("nodo LN dedicado", BOX.x + BOX.w / 2, BOX.y + 114, { font: `13px ${MONO}`, color: C.dim, align: "center", alpha: sideA });
+    panel(CW, 16, C.ink, sideA);
+    text("Cold wallet", CW.x + CW.w / 2, CW.y + 46, { font: `600 26px ${SERIF}`, align: "center", alpha: sideA });
+    text("de tu usuario", CW.x + CW.w / 2, CW.y + 72, { font: `italic 18px ${SERIF}`, color: C.dim, align: "center", alpha: sideA });
+    const in1 = P("c-pay", 0.75, 0.95);
+    text("+99.169 sats", CW.x + 24, CW.y + 130, { font: `600 22px ${SERIF}`, color: C.green, alpha: in1 });
+    text("100.000 − 700 − minería", CW.x + 24, CW.y + 152, { font: `12px ${MONO}`, color: C.dim, alpha: in1 });
+
+    // flights: the user's payment
+    const boxIn = { x: BOX.x - 14, y: BOX.y + 75 }, boxOut = { x: BOX.x + BOX.w + 18, y: BOX.y + 75 };
+    const mbOut = { x: MB.x + MB.w + 14, y: MB.y + 150 };
+    let q = P("c-pay", 0.1, 0.4);
+    if (q > 0 && q < 1) { const f = fly(mbOut, boxIn, q, 50); bolt(f.x, f.y, 1, C.yellow); }
+    pulse(BOX.x + BOX.w / 2, BOX.y + BOX.h / 2, P("c-pay", 0.4, 0.6), C.blue);
+    q = P("c-pay", 0.5, 0.8);
+    if (q > 0 && q < 1) { const f = fly(boxOut, { x: CW.x - 12, y: CW.y + 126 }, q, 40); packet(f.x, f.y); }
+
+    // the fee split, under ln2oc
+    const sA = P("c-split", 0, 0.2);
+    if (sA > 0) {
+      const bx = 470, by = 430, bw = 360, bh = 26;
+      text("comisión: 700 sats (0,7 %)", bx + bw / 2, by - 12, { font: `13px ${MONO}`, color: C.dim, align: "center", alpha: sA });
+      const sp = P("c-split", 0.25, 0.55), cw = (bw * 100) / 700;
+      ctx.save(); ctx.globalAlpha = sA;
+      rr(bx, by, bw, bh, 6); ctx.fillStyle = C.blue; ctx.globalAlpha = sA * 0.85; ctx.fill();
+      ctx.globalAlpha = sA * sp; rr(bx + bw - cw, by, cw, bh, 6); ctx.fillStyle = PURPLE; ctx.fill();
+      ctx.restore();
+      text("600 · operador", bx + 10, by + bh + 22, { font: `600 13px ${MONO}`, color: C.blue, alpha: sA * sp });
+      text("100 · comunidad", bx + bw, by + bh + 22, { font: `600 13px ${MONO}`, color: PURPLE, align: "right", alpha: sA * sp });
+      const fq = P("c-split", 0.6, 0.85);
+      if (fq > 0 && fq < 1) { const f = fly({ x: bx + bw - cw / 2, y: by }, { x: MB.x + MB.w - 60, y: MB.y + 258 }, fq, 80); coin(f.x, f.y, PURPLE, 9); }
+    }
+    // more withdrawals accrue
+    if (sum && !after("c-paid")) {
+      for (let i = 0; i < 3; i++) {
+        const qq = P("c-sum", 0.15 + i * 0.22, 0.35 + i * 0.22);
+        if (qq > 0 && qq < 1) {
+          const f = fly(mbOut, boxIn, qq, 40); bolt(f.x, f.y, 0.7, C.yellow);
+          const g = fly(boxOut, { x: CW.x - 12, y: CW.y + 126 }, qq, 30); packet(g.x, g.y, 0.8);
+        }
+      }
+    }
+    // the operator pays the community over Lightning
+    q = P("c-paid", 0.15, 0.55);
+    if (q > 0 && q < 1) { const f = fly(boxIn, { x: MB.x + MB.w + 14, y: MB.y + 270 }, q, -40); bolt(f.x, f.y, 1, PURPLE); }
+    text("pagado por Lightning ✓", X, MB.y + 288, { font: `600 12px ${MONO}`, color: C.green, alpha: P("c-paid", 0.55, 0.7) * (after("c-end") ? 0 : 1) });
+
+    if (cur.cap) {
+      const sc = scene(cur.k), local = clamp((t - sc.a) / 0.5), out = 1 - clamp((t - (sc.b - 0.35)) / 0.35);
+      wrap(cur.cap, 1060, `22px ${SERIF}`).forEach((ln, i) =>
+        text(ln, W / 2, 602 + i * 30, { font: `22px ${SERIF}`, align: "center", alpha: Math.min(local, out) }));
+    }
+    if (after("c-end")) {
+      const p = P("c-end", 0, 0.2);
+      ctx.save(); ctx.globalAlpha = 0.92 * p; ctx.fillStyle = C.bg; ctx.fillRect(0, 96, W, H - 96); ctx.restore();
+      text("Tus usuarios retiran on-chain.", W / 2, 300, { font: `600 46px ${SERIF}`, align: "center", write: P("c-end", 0.1, 0.45), alpha: p });
+      text("Vos te llevás una parte.", W / 2, 362, { font: `600 46px ${SERIF}`, color: PURPLE, align: "center", write: P("c-end", 0.35, 0.65), alpha: p });
+      text("Sin construir nada: un parámetro en la URL.", W / 2, 440,
+        { font: `italic 24px ${SERIF}`, color: C.dim, align: "center", alpha: P("c-end", 0.6, 0.85) });
+    }
+  }
+
   // ---------------------------------------------------------------- UI
-  const playBtn = root.querySelector("#play"), scrub = root.querySelector("#scrub"), timeEl = root.querySelector("#time");
-  const chaptersEl = root.querySelector("#chapters");
+  // Everything is looked up inside root (data-flow attributes, no ids): several players
+  // can live on one page. Off-screen players pause; one the viewer paused stays paused.
+  const q$ = (n) => root.querySelector(`[data-flow=${n}]`);
+  const playBtn = q$("play"), scrub = q$("scrub"), timeEl = q$("time"), chaptersEl = q$("chapters");
+  const scenBtns = [...root.querySelectorAll("[data-scen]")];
+  let userPaused = false, visible = false;
   function buildChapters() {
+    if (!chaptersEl) return;
     chaptersEl.innerHTML = "";
     SCEN[scen].scenes.filter((s) => s.k !== "title").forEach((s) => {
       const b = document.createElement("button"); b.type = "button"; b.dataset.k = s.k;
-      b.innerHTML = `<span>${s.step || "Fin"}</span>${s.title}`;
+      const sp = document.createElement("span"); sp.textContent = s.step || "Fin";
+      b.append(sp, document.createTextNode(s.title));
       b.addEventListener("click", () => { t = s.a + 0.01; draw(); });
       chaptersEl.appendChild(b);
     });
@@ -647,7 +773,7 @@ export function mountFlow(root) {
     scrub.max = total(); scrub.value = t.toFixed(2);
     timeEl.textContent = `${t.toFixed(1).replace(".", ",")} / ${total()} s`;
     const k = current().k;
-    chaptersEl.querySelectorAll("button").forEach((b) => b.classList.toggle("now", b.dataset.k === k));
+    chaptersEl?.querySelectorAll("button").forEach((b) => b.classList.toggle("now", b.dataset.k === k));
   }
   function loop(ts) {
     raf = null;
@@ -657,44 +783,50 @@ export function mountFlow(root) {
     if (t >= total()) { t = total(); draw(); setPlaying(false); return; }
     draw(); raf = requestAnimationFrame(loop);
   }
-  playBtn.addEventListener("click", () => { if (!playing && t >= total()) t = 0; setPlaying(!playing); });
-  root.querySelector("#restart").addEventListener("click", () => { t = 0; setPlaying(true); });
-  scrub.addEventListener("input", () => { t = parseFloat(scrub.value); if (playing) setPlaying(false); draw(); });
-  function setScen(s) {
-    scen = s; t = 0;
-    for (const id of ["user", "ok", "fail"]) root.querySelector(`#sc-${id}`).setAttribute("aria-pressed", String(s === id));
-    buildChapters(); setPlaying(!reduced); draw();
+  function toggle() {
+    if (!playing && t >= total()) t = 0;
+    userPaused = playing;
+    setPlaying(!playing);
   }
-  root.querySelector("#sc-user").addEventListener("click", () => setScen("user"));
-  root.querySelector("#sc-ok").addEventListener("click", () => setScen("ok"));
-  root.querySelector("#sc-fail").addEventListener("click", () => setScen("fail"));
-  const onKey = (e) => {
-    if (e.code === "Space" && !(e.target instanceof HTMLButtonElement) && !(e.target instanceof HTMLInputElement)) { e.preventDefault(); playBtn.click(); }
-  };
+  playBtn.addEventListener("click", toggle);
+  cv.addEventListener("click", toggle);
+  q$("restart").addEventListener("click", () => { t = 0; userPaused = false; setPlaying(true); });
+  scrub.addEventListener("input", () => { t = parseFloat(scrub.value); userPaused = true; if (playing) setPlaying(false); draw(); });
+  function setScen(s) {
+    scen = s; t = 0; userPaused = false;
+    for (const b of scenBtns) b.setAttribute("aria-pressed", String(b.dataset.scen === s));
+    buildChapters(); setPlaying(!reduced && visible); draw();
+  }
+  for (const b of scenBtns) b.addEventListener("click", () => setScen(b.dataset.scen));
   function resize() {
     const r = cv.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
     cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.width * dpr * 9 / 16); draw();
   }
   window.addEventListener("resize", resize);
-  document.addEventListener("keydown", onKey);
+  const io = new IntersectionObserver(([e]) => {
+    visible = e.isIntersecting;
+    if (disposed || reduced) return;
+    if (visible && !userPaused && !playing && t < total()) setPlaying(true);
+    if (!visible && playing) setPlaying(false);
+  }, { threshold: 0.35 });
 
-  const fontsReady = Promise.all([
-    document.fonts.load(`24px ${SERIF}`), document.fonts.load(`italic 24px ${SERIF}`),
-    document.fonts.load(`600 24px ${SERIF}`), document.fonts.load(`14px ${MONO}`), document.fonts.load(`600 14px ${MONO}`),
-  ]).catch(() => {});
+  scen = SCEN[initial] ? initial : "user";
+  for (const b of scenBtns) b.setAttribute("aria-pressed", String(b.dataset.scen === scen));
   buildChapters();
-  if (reduced) { t = scene("u-pay").b - 0.01; playing = false; }
+  if (reduced) { const sc = SCEN[scen].scenes; t = sc[Math.min(1, sc.length - 1)].b - 0.01; playing = false; }
+  const fontsReady = document.fonts ? document.fonts.ready : Promise.resolve();
   Promise.race([fontsReady, new Promise((r) => setTimeout(r, 1500))]).then(() => {
     if (disposed) return;
     resize();
-    setPlaying(!reduced);
+    io.observe(cv);
   });
+  setPlaying(false);
   resize();
 
   return () => {
     disposed = true;
+    io.disconnect();
     if (raf !== null) cancelAnimationFrame(raf);
     window.removeEventListener("resize", resize);
-    document.removeEventListener("keydown", onKey);
   };
 }

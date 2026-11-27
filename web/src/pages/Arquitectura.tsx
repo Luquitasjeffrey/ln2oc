@@ -512,7 +512,7 @@ export default function Arquitectura() {
         </div>
       </section>
       <div className="pager">
-        <a href="/flujo/">
+        <a href="/docs/flujo/">
           ← El swap en movimiento
         </a>
         <a href="/">

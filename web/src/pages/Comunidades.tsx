@@ -1,3 +1,6 @@
+import { FlowPlayer } from "../components/FlowPlayer";
+import { Sequence } from "../components/Sequence";
+import { PARTICIPANTS, SUCCESS } from "../lib/diagrams";
 import { communityFeeSat, fmt, pct, serviceFeeSat } from "../lib/fees";
 import { useInstanceInfo } from "../lib/info";
 
@@ -82,6 +85,19 @@ export default function Comunidades() {
         </ol>
       </section>
 
+      <section aria-labelledby="h-seq">
+        <h2 id="h-seq" className="read">El recorrido completo</h2>
+        <p className="read">
+          Desde que tu servicio pide la invoice con tu nombre hasta que el operador te liquida. El reembolso, cuando el nodo no tiene saldo, está en <a href="/docs/#secuencia">Cómo funciona</a>: en ese caso tu comunidad no cobra nada, porque no hubo swap.
+        </p>
+        <Sequence title="Un retiro que llega por tu comunidad: la Lightning Address, la hold invoice, el payout on-chain y tu parte de la comisión." participants={PARTICIPANTS} steps={SUCCESS} />
+        <div style={{ marginTop: "2rem" }}>
+          <FlowPlayer
+            scenarios={["community"]}
+            label="Animación para comunidades: tu servicio agrega ?community= al pedir la invoice, tu usuario retira on-chain, la comisión se reparte entre el operador y tu comunidad, y el operador te liquida lo acumulado por Lightning."
+          />
+        </div>
+      </section>
       <section className="read" aria-labelledby="h-users">
         <h2 id="h-users">Para tus usuarios no cambia nada</h2>
         <ul className="facts">
@@ -112,8 +128,8 @@ export default function Comunidades() {
       </section>
 
       <div className="pager">
-        <a href="/usuario/">← Usuarios</a>
-        <a href="/operadores/">Operadores →</a>
+        <a href="/docs/usuarios/">← Usuarios</a>
+        <a href="/docs/operadores/">Operadores →</a>
       </div>
     </>
   );

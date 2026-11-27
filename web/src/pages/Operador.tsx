@@ -1,3 +1,4 @@
+import { FlowPlayer } from "../components/FlowPlayer";
 export default function Operador() {
   return (
     <>
@@ -39,11 +40,25 @@ export default function Operador() {
               #1: se consigue mejor ratio de conversión de Lightning a on-chain con cantidades grandes.
             </b>
             {" "}De ahí sale tu margen. Además: montos chicos, hasta 1.000.000 sats por swap. Comisión del 0,7 %, configurable. Nodo y dominio dedicados. Reponer el saldo on-chain es manual, convirtiendo en bloque. Cualquiera puede levantar su instancia. La lista completa está en el{" "}
-            <a href="/#h-sup">
-              índice
+            <a href="/docs/#supuestos">
+              inicio de las docs
             </a>
             .
           </p>
+        </div>
+      </section>
+      <section aria-labelledby="h-anim">
+        <h2 id="h-anim" className="read">
+          El swap por dentro
+        </h2>
+        <p className="read">
+          Lo que hace tu nodo en cada swap: la hold invoice, el pago retenido, el chequeo de saldo, el settle, la firma y la publicación del payout. Y qué pasa cuando no hay saldo.
+        </p>
+        <div style={{ marginTop: "1.25rem" }}>
+          <FlowPlayer
+            scenarios={["ok", "fail"]}
+            label="Animación del swap por dentro, para operadores: hold invoice, pago retenido, chequeo de saldo, settle, firma y publicación del payout, o cancelación si no hay saldo."
+          />
         </div>
       </section>
       <section aria-labelledby="h-cap">
@@ -717,10 +732,10 @@ export default function Operador() {
         </ul>
       </section>
       <div className="pager">
-        <a href="/comunidades/">
+        <a href="/docs/comunidades/">
           ← Community leaders
         </a>
-        <a href="/desarrolladores/">
+        <a href="/docs/desarrolladores/">
           Desarrolladores →
         </a>
       </div>

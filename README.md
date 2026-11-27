@@ -178,6 +178,76 @@ PENDING ──(invoice ACCEPTED)──► INVOICE_HOLD ──(settle + tx enviad
 EXPIRED (nunca se pagó)          FAILED (invoice cancelada, el pagador no pierde nada)
 ```
 
+#### Diagrama de secuencia: swap exitoso
+
+De la Lightning Address al payout on-chain, con la comunidad (opcional) que se lleva su parte. El sitio tiene los mismos diagramas en `/docs/#secuencia` (`web/src/lib/diagrams.ts`): si cambia el flujo, actualizar los dos.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Wallet LN (quien paga)
+    participant C as Comunidad (opcional)
+    participant S as ln2oc (API + worker)
+    participant L as LND (nodo dedicado)
+    participant B as Bitcoin (cold wallet)
+
+    Note over P,B: 1. LIGHTNING ADDRESS  bc1q…@ln2oc.com
+    C->>S: GET /.well-known/lnurlp/bc1q…?community=nombre
+    P->>S: o directo: GET /.well-known/lnurlp/bc1q…
+    S-->>P: payRequest: callback, min / max, metadata
+
+    Note over P,B: 2. INVOICE
+    P->>S: GET /lnurlp/cb?amount=100.000 sats
+    S->>S: valida dirección, monto, comunidad (700 de comisión)
+    S->>L: AddHoldInvoice(hash del preimage)
+    S-->>P: hold invoice (swap PENDING)
+
+    Note over P,B: 3. PAGO RETENIDO
+    P->>L: paga 100.000 sats (el HTLC queda trabado)
+    S->>L: LookupInvoice (cada 60 s)
+    L-->>S: ACCEPTED, cobrado = monto (INVOICE_HOLD)
+
+    Note over P,B: 4. PAYOUT, todo en la misma vuelta del worker
+    S->>L: ¿sin tx en el mempool? saldo − reserva alcanza
+    S->>L: EstimateFee de la tx real + 20 %
+    S->>L: SettleInvoice(preimage) → SETTLED
+    S->>L: FundPsbt + FinalizePsbt
+    S->>S: verifica destino, monto, inputs, minería ≤ cobrada
+    S->>L: PublishTransaction
+    L-->>B: 99.169 sats on-chain (SUCCESS)
+
+    Note over P,B: 5. COMUNIDAD (si vino con ?community=)
+    S->>S: 600 para el operador, 100 se le deben a la comunidad
+    S-->>C: el operador liquida a mano, por Lightning
+```
+
+#### Diagrama de secuencia: sin saldo on-chain (reembolso)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant P as Wallet LN (quien paga)
+    participant C as Comunidad (opcional)
+    participant S as ln2oc (API + worker)
+    participant L as LND (nodo dedicado)
+    participant B as Bitcoin (cold wallet)
+
+    Note over P,B: 1-3. LIGHTNING ADDRESS, INVOICE Y PAGO RETENIDO (igual que arriba)
+    P->>S: GET /.well-known/lnurlp/bc1q… y callback?amount=…
+    S->>L: AddHoldInvoice
+    S-->>P: hold invoice (PENDING)
+    P->>L: paga (el HTLC queda trabado)
+    S->>L: LookupInvoice
+    L-->>S: ACCEPTED (INVOICE_HOLD)
+
+    Note over P,B: 4. SIN SALDO ON-CHAIN: reembolso
+    S->>L: saldo − reserva no alcanza (o dirección repetida)
+    S->>S: swap FAILED (y todos los que llegaron después)
+    S->>L: CancelInvoice → CANCELED
+    L-->>P: el HTLC se deshace: los 100.000 sats vuelven
+    Note over P,B: Nada se cobró, nada se firmó, nada salió a la red. La comunidad no cobra.
+```
+
 1. **LNURL-Pay**: valida la dirección y el monto y guarda `gross_sat` = monto − comisión. **No estima minería** y **no reserva saldo**: si el saldo gastable menos `ONCHAIN_RESERVE_SAT` ya no alcanza, rechaza de entrada, pero las invoices sin pagar no bloquean liquidez.
 2. **Hold invoice** (`AddHoldInvoice`) con `cltv_expiry` explícito.
 3. **Pago retenido**: el polling ve la invoice `ACCEPTED` → `INVOICE_HOLD`.
@@ -306,7 +376,7 @@ docker compose down
 
 ## 🌐 Sitio web (`web/`)
 
-Sitio estático en React + Vite (multi-página: `/`, `/usuario/`, `/operadores/`, `/flujo/`, `/arquitectura/`), con el contenido y el estilo del artifact de documentación. **Lo sirve su propio servidor** (servicio `web` de Docker Compose: nginx en el puerto `8080`). El servicio de swaps no sirve archivos del sitio: solo redirige `GET /` a `FRONTEND_URL`.
+Sitio estático en React + Vite, multi-página y separado en dos: **el sitio** (`/`: usuarios arriba, community leaders abajo en `/#comunidades`, con su animación cada uno, la Lightning Address armada en el navegador y, opcional, la invoice pedida desde la web por LNURL) y **las docs** (`/docs/`: cómo funciona con los diagramas de secuencia, y una página por público: `usuarios`, `comunidades`, `operadores`, `desarrolladores`, más `flujo` y `arquitectura`). El nav pregunta "¿Quién sos?". Las rutas viejas (`/usuario/`, `/operadores/`…) redirigen a `/docs/…`. **Lo sirve su propio servidor** (servicio `web` de Docker Compose: nginx en el puerto `8080`). El servicio de swaps no sirve archivos del sitio: solo redirige `GET /` a `FRONTEND_URL`.
 
 El sitio lee los valores reales de la instancia de `GET /api/info` (red, dominio, comisión, límites, tasa de minería actual y tamaño del último payout, versión y commit). Si la API no responde, muestra los valores por defecto.
 

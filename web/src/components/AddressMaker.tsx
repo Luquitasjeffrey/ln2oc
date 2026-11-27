@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { validateAddress, type AddressResult } from "../lib/address";
 import { useInstanceInfo } from "../lib/info";
+import { LnurlPay } from "./LnurlPay";
 
 const EXAMPLE: Record<string, string> = {
   mainnet: "bc1qmefue372ssa4zffa4n0hqadscqp2myg9utwrtr",
@@ -10,7 +11,7 @@ const EXAMPLE: Record<string, string> = {
 };
 
 /** "Armá tu Lightning Address": paste an address, get <address>@<domain>. Validated locally. */
-export function AddressMaker() {
+export function AddressMaker({ withPay = false }: { withPay?: boolean }) {
   const { info } = useInstanceInfo();
   const [raw, setRaw] = useState("");
   const [result, setResult] = useState<AddressResult>({ state: "empty" });
@@ -79,6 +80,7 @@ export function AddressMaker() {
         </button>
       </div>
       <p className="maker-status">{status}</p>
+      {withPay && result.state === "ok" && <LnurlPay key={result.addr} addr={result.addr} />}
     </div>
   );
 }

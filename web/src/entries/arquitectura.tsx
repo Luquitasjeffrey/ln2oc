@@ -1,4 +1,5 @@
 import "../styles/base.css";
+import "../styles/docs.css";
 import "../styles/arquitectura.css";
 import Page from "../pages/Arquitectura";
 import { mount } from "./mount";

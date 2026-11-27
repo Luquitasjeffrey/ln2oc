@@ -86,7 +86,7 @@ Un proveedor Lightning (exchange como un nodo de Mostro, wallet, sistema de pago
 | `app/fees.py` | Tasa de minería (sat/kw → sat/vB) y `calculate_gross` (enteros, basis points). No hay tamaño de tx fijo: la minería sale de la tx real |
 | `app/halt.py` | `FatalSwapError` (uno o varios swaps), `halt_process` |
 | `app/info.py` | `GET /` → redirect a `FRONTEND_URL`; `GET /api/info` (parámetros de la instancia, commit) |
-| `web/` | Sitio estático React + Vite (multi-página), servido por su propio nginx. Ver `web/CLAUDE.md` y README |
+| `web/` | Sitio estático React + Vite, servido por su propio nginx: el sitio (`/`, usuarios y comunidades) y las docs (`/docs/`, con diagramas de secuencia), separados. Ver `web/CLAUDE.md` y README |
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
 | `app/config.py` | Settings con validación (falla al arrancar si algo está fuera de rango) |
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
@@ -119,7 +119,7 @@ No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio s
 
 ## Artifact de documentación
 
-Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con públicos y supuestos, `usuario.html`, `comunidades.html` (community leaders), `operador.html`, `desarrolladores.html`, animación `flujo.html`, `arquitectura.html`). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). El sitio `web/` porta este contenido (páginas en `web/src/pages/`, animación en `web/src/flujo/animation.js`): si cambia el flujo, actualizar ambos. Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
+Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con públicos y supuestos, `usuario.html`, `comunidades.html` (community leaders), `operador.html`, `desarrolladores.html`, animación `flujo.html`, `arquitectura.html`). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). El sitio `web/` porta este contenido (páginas en `web/src/pages/`, animación en `web/src/flujo/animation.js`, diagramas de secuencia en `web/src/lib/diagrams.ts` y en mermaid en el README): si cambia el flujo, actualizar todo. Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
 
 ## TODO priorizado
 

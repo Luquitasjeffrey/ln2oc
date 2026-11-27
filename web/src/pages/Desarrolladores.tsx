@@ -75,8 +75,8 @@ export default function Desarrolladores() {
       </section>
 
       <div className="pager">
-        <a href="/operadores/">← Operadores</a>
-        <a href="/flujo/">El swap en movimiento →</a>
+        <a href="/docs/operadores/">← Operadores</a>
+        <a href="/docs/flujo/">El swap en movimiento →</a>
       </div>
     </>
   );

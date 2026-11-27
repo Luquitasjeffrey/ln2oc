@@ -1,18 +1,30 @@
 import { AddressMaker } from "../components/AddressMaker";
+import { FlowPlayer } from "../components/FlowPlayer";
 import { SwapLedger } from "../components/SwapLedger";
 import { communityFeeSat, fmt, pct, serviceFeeSat } from "../lib/fees";
 import { useInstanceInfo } from "../lib/info";
 
-const AUDIENCES: [string, string, string, string][] = [
-  ["/usuario/", "Usuarios", "Querés tus sats en frío",
-   "Recibís o te mandás sats por Lightning y llegan on-chain a tu cold wallet. Cómo armar tu Lightning Address, cuánto te llega y qué pasa si algo sale mal."],
-  ["/comunidades/", "Community leaders", "Tenés usuarios en Lightning",
-   "Corrés un exchange P2P, una wallet o un sistema de pagos. Les ofrecés retiro on-chain a tus usuarios sin construirlo y te llevás una parte de la comisión de cada swap."],
-  ["/operadores/", "Operadores", "Corrés tu propia instancia",
-   "Ponés el nodo y el capital en los dos lados, y ganás la comisión de cada swap. El capital, la liquidez, cómo reponer el saldo on-chain y cómo registrar comunidades."],
-  ["/desarrolladores/", "Desarrolladores", "Querés leer o integrar el código",
-   "El repo en GitHub, la API LNURL con el hook de comunidades, cómo correrlo y testearlo, la animación y la arquitectura."],
-]; // [href, who, headline, text]
+const USES: [string, string, string][] = [
+  ["Auto-envío", "De tu wallet caliente a frío",
+   "Juntaste sats en Wallet of Satoshi, Phoenix o la wallet que uses. Te pagás a tu propia Lightning Address y quedan en tu cold wallet, sin abrir canales ni hacer un swap a mano."],
+  ["P2P sin KYC", "Cobrás un trade, recibís en frío",
+   "Comprás sats en un exchange P2P y, donde te pide cómo cobrar, ponés tu Lightning Address de ln2oc (por ejemplo, en Mostro). Cuando el vendedor libera, los sats van directo a tu cold wallet."],
+  ["Cobros", "Cobrar cualquier cosa",
+   "Una venta, una donación, un sueldo en sats: quien te paga usa Lightning y vos recibís on-chain. Para cada cobro podés armar una dirección nueva en segundos."],
+];
+
+const FAQ: [string, string][] = [
+  ["¿Tengo que crear una cuenta?",
+   "No. No hay registro, ni login, ni saldo a tu nombre. Lo único que le das al servicio es una dirección de recepción de tu cold wallet."],
+  ["¿Qué pasa si el servicio no tiene sats on-chain para pagarme?",
+   "Tu pago queda retenido en una hold invoice, sin cobrarse. Si no hay saldo, la invoice se cancela y el pago vuelve a tu wallet: no perdés nada."],
+  ["¿Cuánto tarda?",
+   "El pago se detecta en hasta un minuto y el payout sale en la misma vuelta, si la wallet del nodo no tiene otra tx sin confirmar. Llega a tu cold wallet con el próximo bloque, más o menos."],
+  ["¿Por qué solo direcciones bc1q… o bc1p…?",
+   "Una Lightning Address va en minúsculas, y las direcciones legacy (1…, 3…) distinguen mayúsculas: una wallet que las pase a minúsculas las rompe. SegWit y Taproot no tienen ese problema."],
+  ["¿Es un swap atómico?",
+   "No. Entre que el servicio cobra tu pago y publica tu tx pasan segundos en los que el operador tiene tu plata. Si algo falla justo ahí, el servicio se frena y una persona lo resuelve: el operador te debe el payout."],
+];
 
 export default function Landing() {
   const { info } = useInstanceInfo();
@@ -21,313 +33,206 @@ export default function Landing() {
   const community = communityFeeSat(amount, info.community_fee_rate_bps);
   return (
     <>
-      <header className="hero">
-        <div className="eyebrow">
-          ln2oc · Lightning → on-chain
+      {/* ------------------------------------------------ users */}
+      <section className="hero" aria-labelledby="h-hero">
+        <div className="hero-glow" aria-hidden="true" />
+        <div className="wrap hero-in">
+          <span className="chip">
+            <span className="dot" /> Lightning → on-chain · sin cuentas
+          </span>
+          <h1 id="h-hero">
+            Recibí por <span className="ln">Lightning</span>.<br />
+            Llega a tu <span className="btc">cold wallet</span>.
+          </h1>
+          <p className="lede">
+            Tu Lightning Address es tu dirección de Bitcoin. Te pagan por Lightning, o te pagás vos desde tu wallet caliente, y
+            los sats aterrizan on-chain en una dirección cuyas llaves solo tenés vos.
+          </p>
+          <div className="hero-maker">
+            <AddressMaker withPay />
+            <div className="addr-legend">
+              <span className="l1">tu dirección on-chain</span>
+              <span className="l2">el dominio de ln2oc</span>
+              <span>Se valida en tu navegador, con checksum.</span>
+            </div>
+          </div>
+          <dl className="stats">
+            <div><dt>Comisión</dt><dd>{pct(info.swap_fee_rate_bps)}</dd></div>
+            <div><dt>Por swap</dt><dd>hasta {fmt(info.max_swap_sat)} sats</dd></div>
+            <div><dt>Si falla</dt><dd>el pago vuelve</dd></div>
+            <div><dt>Registro</dt><dd>ninguno</dd></div>
+          </dl>
         </div>
-        <h1 style={{ marginTop: "1rem" }}>
-          Recibí por Lightning. Que llegue directo a tu cold wallet.
-        </h1>
-        <p className="lede read">
-          Tu Lightning Address es tu dirección de Bitcoin. Te pagan por Lightning, o te pagás vos mismo desde tu wallet caliente, y los sats aterrizan on-chain en una dirección cuyas llaves solo tenés vos. Sin cuentas, sin registro, sin saldos de custodia esperando.
-        </p>
-        <AddressMaker />
-        <div className="addr-legend">
-          <span className="l1">
-            tu dirección on-chain (la de tu cold wallet)
-          </span>
-          <span className="l2">
-            el dominio de ln2oc
-          </span>
-          <span>
-            Se valida acá, en tu navegador, con checksum.
-          </span>
+      </section>
+
+      <section className="wrap band" aria-labelledby="h-how">
+        <div className="band-head">
+          <span className="eyebrow">Para usuarios</span>
+          <h2 id="h-how">Una dirección, un pago, sats en frío</h2>
         </div>
-      </header>
-      <section aria-labelledby="h-who">
-        <h2 id="h-who">
-          ¿Quién sos?
-        </h2>
-        <div className="chapters">
-          {AUDIENCES.map(([href, eyebrow, title, text]) => (
-            <a className="chapter" href={href} key={href}>
-              <span className="eyebrow">{eyebrow}</span>
+        <ol className="how">
+          <li>
+            <b>Armá tu Lightning Address</b>
+            <span>Pegá una dirección de tu cold wallet y sumale <code>@{info.domain}</code>. Eso es todo.</span>
+          </li>
+          <li className="lnstep">
+            <b>Pagá desde cualquier wallet Lightning</b>
+            <span>O dásela a quien te paga. El pago queda retenido en una hold invoice: nadie lo cobró todavía.</span>
+          </li>
+          <li className="btcstep">
+            <b>Llega on-chain</b>
+            <span>Si el nodo tiene saldo, cobra y publica tu tx en el mismo paso. Si no, cancela y tu pago vuelve.</span>
+          </li>
+        </ol>
+        <div className="anim">
+          <FlowPlayer
+            scenarios={["user"]}
+            label="Animación para usuarios: armás tu Lightning Address, pagás desde tu wallet o cobrás un trade P2P, y los sats llegan a tu cold wallet. Si el nodo no tiene fondos, tus sats no se mueven."
+          />
+        </div>
+      </section>
+
+      <section className="wrap band" aria-labelledby="h-uses">
+        <div className="band-head">
+          <span className="eyebrow">Para qué sirve</span>
+          <h2 id="h-uses">Tres formas de usarlo</h2>
+        </div>
+        <div className="cards3">
+          {USES.map(([eb, title, text]) => (
+            <div className="card" key={eb}>
+              <span className="eyebrow">{eb}</span>
               <h3>{title}</h3>
               <p>{text}</p>
-              <span className="go">{href} →</span>
-            </a>
+            </div>
           ))}
         </div>
       </section>
-      <section className="assumptions" aria-labelledby="h-sup">
+
+      <section className="wrap band two" aria-label="Costos y confianza">
         <div>
-          <span className="eyebrow">
-            Esta versión
-          </span>
-          <h2 id="h-sup" style={{ marginTop: "0.5rem" }}>
-            Supuestos
-          </h2>
-          <p className="sup-lede">
-            Lo que ln2oc da por hecho hoy. Si alguno no se cumple en tu caso, este no es tu servicio, o todavía no.
-          </p>
-        </div>
-        <ol className="sup-list">
-          <li className="key">
-            <span>
-              <b>
-                Se consigue mejor ratio de conversión de Lightning a on-chain con cantidades grandes.
-              </b>
-              {" "}Pasar 5.000.000 sats de una vez cuesta, en porcentaje, bastante menos que pasarlos de a 100.000: quizás 0,2 % o menos, contra el 0,7 % que se cobra por swap chico. Todo el modelo se apoya en esa diferencia (las opciones reales y sus costos están en{" "}
-              <a href="/operadores/#h-refill">
-                cómo reponer el saldo on-chain
-              </a>
-              ). Si no se cumpliera, el servicio no cerraría por costo: su valor pasaría a ser la comodidad, y la comisión tendría que reflejarlo (hay usuarios que por comodidad pagarían, por ejemplo, 1 %).
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                Montos chicos.
-              </b>
-              {" "}Está pensado para quien quiere pasar a on-chain hasta 1.000.000 sats por swap, que es justo donde convertir por su cuenta sale caro.
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                Comisión fija del 0,7 %.
-              </b>
-              {" "}Es el valor por defecto y cada operador lo puede cambiar. A eso se suma la minería de tu tx.
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                El operador repone el saldo on-chain a mano.
-              </b>
-              {" "}Junta volumen en Lightning y lo convierte en bloque, o cierra canales. Automatizarlo no es parte de esta versión.
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                Servicio aislado.
-              </b>
-              {" "}Corre con su propio nodo LN dedicado y su propio dominio, con poca plata adentro. Nunca en un nodo principal ni en uno que se use para otra cosa.
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                Cualquiera puede levantar su instancia.
-              </b>
-              {" "}El código es GPLv3: con tu nodo, tu dominio y tu comisión.
-            </span>
-          </li>
-          <li>
-            <span>
-              <b>
-                Custodia por segundos, no swap atómico.
-              </b>
-              {" "}Entre el cobro y la publicación de tu tx, el operador tiene tu plata. Si algo falla ahí, el servicio se frena y te debe el payout.
-            </span>
-          </li>
-        </ol>
-      </section>
-      <section aria-labelledby="h-moves">
-        <h2 id="h-moves">
-          El swap en cuatro movimientos
-        </h2>
-        <ol className="moves">
-          <li className="lnstep">
-            <b>
-              Pedís la invoice
-            </b>
-            <span>
-              Tu wallet LN consulta la Lightning Address y recibe una{" "}
-              <em>
-                hold invoice
-              </em>
-              .
-            </span>
-          </li>
-          <li className="lnstep">
-            <b>
-              Pagás, la plata queda retenida
-            </b>
-            <span>
-              El HTLC llega al nodo y queda trabado. Nadie la cobró todavía.
-            </span>
-          </li>
-          <li className="btcstep">
-            <b>
-              El nodo chequea saldo y cobra
-            </b>
-            <span>
-              Si tiene sats on-chain para pagarte, liquida la invoice. Si no, la cancela y no perdés nada.
-            </span>
-          </li>
-          <li className="btcstep">
-            <b>
-              Firma tu tx y la publica
-            </b>
-            <span>
-              Con el pago ya cobrado, firma tu payout y lo publica en el mismo paso. Si llegaron otros pagos a la vez, una misma tx les paga a todos. Llega a tu cold wallet en el próximo bloque.
-            </span>
-          </li>
-        </ol>
-        <p className="read" style={{ color: "var(--muted)" }}>
-          Si cuando llega tu pago el nodo no tiene sats on-chain para cubrirlo, la hold invoice se cancela y el pago vuelve a tu wallet. No perdés nada.
-        </p>
-      </section>
-      <section aria-labelledby="h-uses">
-        <h2 id="h-uses">
-          Para qué sirve
-        </h2>
-        <div className="uses">
-          <div className="use">
-            <span className="eyebrow">
-              Auto-envío
-            </span>
-            <h3>
-              De tu wallet caliente a frío
-            </h3>
-            <p>
-              Juntaste sats en Wallet of Satoshi, Phoenix o la wallet que uses. Te pagás a tu propia Lightning Address y quedan en tu cold wallet, sin abrir canales ni hacer un swap a mano.
-            </p>
-          </div>
-          <div className="use p2p">
-            <span className="eyebrow">
-              P2P sin KYC
-            </span>
-            <h3>
-              Cobrás un trade P2P, recibís en frío
-            </h3>
-            <p>
-              Comprás sats en un exchange P2P y, donde te pide cómo cobrar, ponés tu Lightning Address de ln2oc (por ejemplo, en Mostro). Cuando el vendedor libera, los sats van directo a tu cold wallet, sin pasar por una wallet caliente.
-            </p>
-          </div>
-          <div className="use">
-            <span className="eyebrow">
-              Cobros
-            </span>
-            <h3>
-              Cobrar cualquier cosa
-            </h3>
-            <p>
-              Una venta, una donación, un sueldo en sats: quien te paga usa Lightning y vos recibís on-chain. Para cada cobro podés armar una dirección nueva en segundos.
-            </p>
-          </div>
-        </div>
-      </section>
-      <section className="isolated" aria-labelledby="h-iso">
-        <div>
-          <span className="eyebrow">
-            Diseño
-          </span>
-          <h2 id="h-iso" style={{ marginTop: "0.5rem" }}>
-            Un servicio aislado, a propósito
-          </h2>
+          <span className="eyebrow">Costos</span>
+          <h2>Un swap de {fmt(amount)} sats</h2>
+          <SwapLedger />
         </div>
         <div>
-          <p style={{ marginTop: "0" }}>
-            ln2oc no es un plugin ni corre adentro de otro programa. Es un servicio aparte, con su propio nodo Lightning y su propio dominio,{" "}
-            <b>
-              y así es como hay que correrlo
-            </b>
-            .
-          </p>
-          <ul className="iso-list">
-            <li>
-              <b>
-                Nodo dedicado.
-              </b>
-              {" "}Un nodo LND que hace solo esto, con el capital de trabajo de los swaps y nada más.
-            </li>
-            <li>
-              <b>
-                Nunca tu nodo principal.
-              </b>
-              {" "}Ni el de routing, ni uno con mucha plata, ni uno que uses para otra cosa: si algo sale mal, el daño queda acotado a ese nodo.
-            </li>
-            <li>
-              <b>
-                Dominio dedicado.
-              </b>
-              {" "}ln2oc.com existe solo para las Lightning Addresses del servicio.
-            </li>
-            <li>
-              <b>
-                Se suma a proyectos Lightning.
-              </b>
-              {" "}Una wallet, una plataforma P2P o un comercio lo pueden desplegar al lado de su stack, siempre como servicio separado con su nodo propio.
-            </li>
-          </ul>
-        </div>
-      </section>
-      <section className="isolated comm" aria-labelledby="h-comm">
-        <div>
-          <span className="eyebrow">
-            Comunidades
-          </span>
-          <h2 id="h-comm" style={{ marginTop: "0.5rem" }}>
-            Tus usuarios retiran on-chain, vos te llevás una parte
-          </h2>
-        </div>
-        <div>
-          <p style={{ marginTop: "0" }}>
-            Un exchange, una wallet o un sistema de pagos Lightning puede ofrecerles retiro on-chain a sus usuarios con ln2oc, sin reinventar la rueda. A cambio de acercarnos esos usuarios, la comunidad se lleva una parte de la comisión. Para el usuario no cambia nada: paga lo mismo y recibe lo mismo.
-          </p>
-          <div className="table-wrap">
-            <table className="ledger">
-              <thead>
-                <tr><th>Comisión de un swap de {fmt(amount)} sats</th><th className="r">sats</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>Operador ({pct(info.swap_fee_rate_bps - info.community_fee_rate_bps)})</td><td className="r">{fmt(fee - community)}</td></tr>
-                <tr><td>Comunidad ({pct(info.community_fee_rate_bps)})</td><td className="r ln">{fmt(community)}</td></tr>
-              </tbody>
-              <tfoot>
-                <tr><td>Total que paga el usuario ({pct(info.swap_fee_rate_bps)})</td><td className="r">{fmt(fee)}</td></tr>
-              </tfoot>
-            </table>
-          </div>
-          <p>
-            El modelo de comunidades está inspirado en <a href="https://github.com/lnp2pBot/bot">lnp2pBot</a>, de <a href="https://github.com/grunch">@grunch</a>. <a href="/comunidades/">Cómo crear una comunidad →</a>
-          </p>
-        </div>
-      </section>
-      <section className="two" aria-label="Confianza y números">
-        <div>
-          <h2>
-            En qué confiás y en qué no
-          </h2>
+          <span className="eyebrow">Confianza</span>
+          <h2>En qué confiás y en qué no</h2>
           <ul className="trust">
             <li className="good">
-              <b>
-                Que el nodo tenga fondos:
-              </b>
-              {" "}no hace falta confiar. Si no hay sats on-chain, la hold invoice se cancela y tu pago vuelve.
+              <b>Que el nodo tenga fondos:</b> no hace falta confiar. Si no hay sats on-chain, la hold invoice se cancela y tu
+              pago vuelve.
             </li>
             <li className="good">
-              <b>
-                Que te paguen dos veces o mal:
-              </b>
-              {" "}el servicio verifica la tx firmada (destino, monto, inputs) antes de publicarla, y nunca reintenta un pago: ante cualquier duda se frena y lo revisa una persona.
+              <b>Que te paguen mal o dos veces:</b> la tx firmada se verifica (destino, monto, inputs) antes de publicarla, y
+              un pago nunca se reintenta: ante cualquier duda el servicio se frena y lo revisa una persona.
             </li>
             <li className="care">
-              <b>
-                Los segundos entre el cobro y la publicación:
-              </b>
-              {" "}el operador ya cobró y todavía tiene que firmar y publicar tu tx. Si algo fallara ahí, el servicio se frena y el operador te debe el payout. No es un swap atómico: es custodia por segundos, no por días.
+              <b>Los segundos entre el cobro y la publicación:</b> ahí el operador tiene tu plata. Si algo fallara, el
+              servicio se frena y te debe el payout. Custodia por segundos, no por días.
             </li>
           </ul>
+          <a className="more" href="/docs/usuarios/">Guía completa para usuarios →</a>
         </div>
-        <div>
-          <h2>
-            Un swap de 100.000 sats
-          </h2>
-          <SwapLedger />
+      </section>
+
+      <section className="wrap band" aria-labelledby="h-faq">
+        <div className="band-head">
+          <span className="eyebrow">Preguntas</span>
+          <h2 id="h-faq">Lo que todos preguntan</h2>
+        </div>
+        <div className="faq">
+          {FAQ.map(([q, a]) => (
+            <details key={q}>
+              <summary>{q}</summary>
+              <p>{a}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ community leaders */}
+      <section className="comm-band" id="comunidades" aria-labelledby="h-comm">
+        <div className="wrap">
+          <div className="band-head">
+            <span className="eyebrow comm-eb">Para community leaders</span>
+            <h2 id="h-comm">Tus usuarios retiran on-chain. Vos te llevás una parte.</h2>
+            <p className="lede read">
+              Corrés un exchange P2P, una wallet o un sistema de pagos Lightning. Les ofrecés retiro on-chain a tus usuarios
+              con ln2oc, sin construirlo, y {pct(info.community_fee_rate_bps)} de cada swap que llega por tu comunidad es
+              tuyo. Para tus usuarios no cambia nada: pagan lo mismo y reciben lo mismo.
+            </p>
+          </div>
+          <div className="comm-grid">
+            <ol className="comm-steps">
+              <li>
+                <b>Hablás con el operador</b>
+                <span>Te registra con un nombre: minúsculas, números y guiones. Sin firmar nada ni bloquear fondos.</span>
+              </li>
+              <li>
+                <b>Sumás un parámetro</b>
+                <span>Tu servicio resuelve la Lightning Address como siempre y agrega <code>?community=tu-comunidad</code>.</span>
+              </li>
+              <li>
+                <b>Cobrás lo acumulado</b>
+                <span>Cada swap exitoso suma. El operador te liquida por Lightning y lo registra.</span>
+              </li>
+            </ol>
+            <div className="comm-side">
+              <pre>
+                <span className="c">{"# tu usuario te da su Lightning Address"}</span>
+                {`\nGET https://${info.domain}/.well-known/lnurlp/bc1q…`}
+                <span className="hl">{"?community=tu-comunidad"}</span>
+              </pre>
+              <div className="table-wrap">
+                <table className="ledger">
+                  <thead>
+                    <tr><th>Comisión de un swap de {fmt(amount)} sats</th><th className="r">sats</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Operador ({pct(info.swap_fee_rate_bps - info.community_fee_rate_bps)})</td><td className="r">{fmt(fee - community)}</td></tr>
+                    <tr><td>Tu comunidad ({pct(info.community_fee_rate_bps)})</td><td className="r comm-t">{fmt(community)}</td></tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td>Lo que paga tu usuario ({pct(info.swap_fee_rate_bps)})</td><td className="r">{fmt(fee)}</td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div className="anim">
+            <FlowPlayer
+              scenarios={["community"]}
+              label="Animación para comunidades: tu servicio agrega ?community= al pedir la invoice, tu usuario retira on-chain, la comisión se reparte entre el operador y tu comunidad, y el operador te liquida lo acumulado por Lightning."
+            />
+          </div>
+          <div className="comm-cta">
+            <a className="btn comm" href="/docs/comunidades/">Cómo integrarlo, en detalle</a>
+            <span className="credit">
+              Inspirado en <a href="https://github.com/lnp2pBot/bot">lnp2pBot</a>, de <a href="https://github.com/grunch">@grunch</a>.
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ the rest lives in the docs */}
+      <section className="wrap band" aria-labelledby="h-more">
+        <div className="band-head">
+          <span className="eyebrow">¿Algo más?</span>
+          <h2 id="h-more">Corré tu instancia o leé el código</h2>
+        </div>
+        <div className="cards2">
+          <a className="card link" href="/docs/operadores/">
+            <span className="eyebrow">Operadores</span>
+            <h3>Poné el nodo, ganá la comisión</h3>
+            <p>Capital en los dos lados, liquidez, cómo reponer el saldo on-chain y cómo registrar comunidades.</p>
+            <span className="go">Docs para operadores →</span>
+          </a>
+          <a className="card link" href="/docs/desarrolladores/">
+            <span className="eyebrow">Desarrolladores</span>
+            <h3>GPLv3, Python, LND por gRPC</h3>
+            <p>La API LNURL con el hook de comunidades, el flujo por dentro, cómo correrlo y testearlo.</p>
+            <span className="go">Docs para desarrolladores →</span>
+          </a>
         </div>
       </section>
     </>
