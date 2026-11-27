@@ -90,6 +90,30 @@ Opciones ordenadas por costo con volumen. Los % no incluyen la minería de la re
 
 Criterio: gana el que da **mejor % con el volumen que necesitás**; a costo parecido, primero lo self-custodial. Lo que cobra 0,5 % o más no deja margen contra el 0,7 %. Datos de noviembre de 2026: cotizá siempre antes de operar (`loop quote out <monto>`).
 
+### Comunidades
+
+Un proveedor de servicios Lightning con muchos usuarios (un exchange como un nodo de Mostro, una wallet, un sistema de pagos) puede ofrecerles retiro on-chain con tu instancia en vez de armar el suyo. A cambio de traerte esos usuarios, **la comunidad se lleva una parte de la comisión**: `COMMUNITY_FEE_RATE` (0,1 % por defecto) sale del `SWAP_FEE_RATE`, no se le suma al usuario.
+
+| Un swap de 100.000 sats | sin comunidad | con comunidad |
+| :--- | ---: | ---: |
+| Comisión total (0,7 %) | 700 | 700 |
+| Para el operador | 700 | 600 |
+| Para la comunidad (0,1 %) | 0 | 100 |
+| Para el usuario (antes de minería) | 99.300 | 99.300 |
+
+Es un **hook cooperativo** sobre LNURL-pay: el integrador arma la URL agregando `?community=<name>` (por ejemplo `https://ln2oc.com/.well-known/lnurlp/bc1q…?community=mi-comunidad`), y el servicio lo arrastra al callback. Una wallet común no manda nada y no ve ninguna diferencia. Una comunidad inexistente da error 400.
+
+Cada swap guarda `community_id`, `operator_fee_sat` y `community_fee_sat`. Lo que se le debe a una comunidad es la suma de `community_fee_sat` de sus swaps `SUCCESS` menos lo que ya le pagaste. **El pago es manual**: el alta y el registro de los pagos se hacen con dos scripts interactivos que corren dentro del contenedor:
+
+```bash
+scripts/register_community.sh            # pide name (a-z, 0-9, '-') y contact (texto libre)
+scripts/withdraw_community_earnings.sh   # muestra lo adeudado; si pagás ahora, lo registra
+```
+
+Después del retiro, le pedís al admin de la comunidad una invoice o una Lightning Address y le pagás a mano.
+
+La inspiración del modelo de comunidades viene de [lnp2pBot](https://github.com/lnp2pBot/bot), de @negrunch.
+
 ### Qué necesitás
 
 - **Un nodo LND v0.20 dedicado** y un **dominio dedicado** con HTTPS. Nunca tu nodo principal, ni uno de routing, ni uno con mucha plata: el servicio firma transacciones solo, y si algo sale mal el daño tiene que quedar acotado a ese nodo.
@@ -177,6 +201,7 @@ Parámetros disponibles en [.env](file:///home/lucas/proj/ln2oc/.env):
 | `LND_TLS_CERT_PATH` | Ruta absoluta al certificado `tls.cert` | `/ruta/.../tls.cert` |
 | `BITCOIN_NETWORK` | Red Bitcoin objetivo (`regtest`, `testnet` = testnet3, `testnet4`, `mainnet`). Para probar en testnet4 ver [`docs/testnet4.md`](docs/testnet4.md) | `regtest` |
 | `SWAP_FEE_RATE` | Tasa de comisión del servicio (spread) | `0.007` (0.7%) |
+| `COMMUNITY_FEE_RATE` | Parte de `SWAP_FEE_RATE` que se le debe a la comunidad del swap (`?community=`); no puede superar `SWAP_FEE_RATE` | `0.001` (0.1%) |
 | `MIN_SWAP_SAT` | Monto mínimo permitido en satoshis | `1000` |
 | `MAX_SWAP_SAT` | Monto máximo permitido en satoshis | `1000000` |
 | `MIN_PAYOUT_SAT` | Límite mínimo de polvo (dust limit) | `546` |

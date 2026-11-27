@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # Bitcoin & Swaps
     BITCOIN_NETWORK: str = "regtest"  # mainnet, testnet (testnet3), testnet4, regtest
     SWAP_FEE_RATE: float = 0.007     # 0.7% (configurable)
+    # Part of SWAP_FEE_RATE owed to the community a swap came through (?community=<name>).
+    COMMUNITY_FEE_RATE: float = 0.001  # 0.1%: the operator keeps 0.6%
     MIN_PAYOUT_SAT: int = 546        # Dust limit
     MIN_SWAP_SAT: int = 1000
     MAX_SWAP_SAT: int = 1_000_000   # aimed at small swaps (<= 1M sats)
@@ -80,6 +82,10 @@ class Settings(BaseSettings):
             errors.append("SWAP_FEE_RATE must be in [0, 1)")
         if abs(self.SWAP_FEE_RATE * 10_000 - round(self.SWAP_FEE_RATE * 10_000)) > 1e-6:
             errors.append("SWAP_FEE_RATE supports at most 0.01% (basis point) precision")
+        if not (0 <= self.COMMUNITY_FEE_RATE <= self.SWAP_FEE_RATE):
+            errors.append("Require 0 <= COMMUNITY_FEE_RATE <= SWAP_FEE_RATE")
+        if abs(self.COMMUNITY_FEE_RATE * 10_000 - round(self.COMMUNITY_FEE_RATE * 10_000)) > 1e-6:
+            errors.append("COMMUNITY_FEE_RATE supports at most 0.01% (basis point) precision")
         if not (0 < self.MIN_SWAP_SAT <= self.MAX_SWAP_SAT):
             errors.append("Require 0 < MIN_SWAP_SAT <= MAX_SWAP_SAT")
         if not (1 <= self.MIN_SAT_PER_VBYTE <= self.MAX_SAT_PER_VBYTE):

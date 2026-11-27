@@ -33,3 +33,16 @@ def calculate_gross(amount_sat: int, fee_rate: float | None = None) -> int:
         fee_rate = settings.SWAP_FEE_RATE
     keep_bps = 10_000 - int(round(fee_rate * 10_000))
     return (amount_sat * keep_bps) // 10_000
+
+
+def split_service_fee(amount_sat: int, gross_sat: int, with_community: bool) -> tuple[int, int]:
+    """(operator_fee_sat, community_fee_sat) of the service fee amount_sat - gross_sat.
+    The community gets floor(amount_sat * COMMUNITY_FEE_RATE), the operator the rest:
+    rounding always goes to the house."""
+    fee = amount_sat - gross_sat
+    community = 0
+    if with_community:
+        community = (amount_sat * int(round(settings.COMMUNITY_FEE_RATE * 10_000))) // 10_000
+    operator = fee - community
+    assert 0 <= community <= fee and operator + community + gross_sat == amount_sat
+    return operator, community

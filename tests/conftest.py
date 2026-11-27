@@ -156,7 +156,8 @@ def insert_swap(Session, amount_sat: int, gross_sat: int, address: str) -> tuple
     with Session() as db:
         swap = Swap(
             payment_hash=payment_hash.hex(), preimage=preimage.hex(), btc_address=address,
-            amount_sat=amount_sat, gross_sat=gross_sat, invoice=resp.payment_request, status=SwapStatus.PENDING,
+            amount_sat=amount_sat, gross_sat=gross_sat, operator_fee_sat=amount_sat - gross_sat, community_fee_sat=0,
+            invoice=resp.payment_request, status=SwapStatus.PENDING,
         )
         db.add(swap)
         db.commit()

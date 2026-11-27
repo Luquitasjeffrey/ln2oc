@@ -97,6 +97,7 @@ def info():
         "network": settings.BITCOIN_NETWORK.lower(),
         "domain": settings.DOMAIN,
         "swap_fee_rate_bps": int(round(settings.SWAP_FEE_RATE * 10_000)),
+        "community_fee_rate_bps": int(round(settings.COMMUNITY_FEE_RATE * 10_000)),  # part of swap_fee_rate_bps
         "min_swap_sat": settings.MIN_SWAP_SAT,
         "max_swap_sat": settings.MAX_SWAP_SAT,
         "min_payout_sat": settings.MIN_PAYOUT_SAT,

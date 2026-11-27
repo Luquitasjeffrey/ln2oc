@@ -14,6 +14,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+# Operator scripts run with `docker compose exec` (scripts/*.sh wrappers).
+COPY scripts/register_community.py scripts/withdraw_community_earnings.py ./scripts/
 
 # Commit reported by /api/info (no .git inside the image).
 ARG GIT_COMMIT=

@@ -5,11 +5,12 @@ import os
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import community as communities
 from app.config import settings
-from app.fees import calculate_gross
+from app.fees import calculate_gross, split_service_fee
 from app.halt import is_halted
 from app.lnd import LndError, LndUnavailable, lnd_client
-from app.models import Swap, SwapStatus
+from app.models import Community, Swap, SwapStatus
 from app.validator import ADDRESS_RULE, validate_bitcoin_address
 
 logger = logging.getLogger("ln2oc.swaps")
@@ -33,7 +34,18 @@ def get_spendable_onchain_balance_sat() -> int:
     return int(bal.confirmed_balance) - int(bal.reserved_balance_anchor_chan)
 
 
-def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
+def resolve_community(db: Session, name: str | None) -> Community | None:
+    """None without ?community=. A name given but invalid or unknown is an error (fail loud:
+    the integrator must notice a misconfiguration instead of silently losing its share)."""
+    if name is None:
+        return None
+    community = communities.get_by_name(db, name)
+    if community is None:
+        raise SwapError(f"Unknown community {name!r} ({communities.NAME_RULE})")
+    return community
+
+
+def create_swap(db: Session, btc_address: str, amount_msat: int, community: str | None = None) -> Swap:
     """
     Validates the request and issues a hold invoice. Reserves nothing: the funds
     check that matters happens when the payment is held (the worker checks the
@@ -50,6 +62,8 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     if pending >= settings.MAX_PENDING_SWAPS:
         logger.warning("Refusing new swap: %d PENDING swaps (MAX_PENDING_SWAPS=%d)", pending, settings.MAX_PENDING_SWAPS)
         raise SwapError("Too many pending swaps, try again later", status_code=503)
+
+    community_row = resolve_community(db, community)
 
     if not validate_bitcoin_address(btc_address, settings.BITCOIN_NETWORK):
         raise SwapError(f"Invalid Bitcoin address for network '{settings.BITCOIN_NETWORK}' ({ADDRESS_RULE}): {btc_address}")
@@ -69,6 +83,7 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         raise SwapError(f"Amount {amount_sat} sat leaves {gross_sat} sat after the service fee, below dust "
                         f"({settings.MIN_PAYOUT_SAT} sat).")
     required_sat = gross_sat
+    operator_fee_sat, community_fee_sat = split_service_fee(amount_sat, gross_sat, community_row is not None)
 
     preimage_bytes = os.urandom(32)
     payment_hash_bytes = hashlib.sha256(preimage_bytes).digest()
@@ -111,6 +126,9 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
         btc_address=btc_address,
         amount_sat=amount_sat,
         gross_sat=gross_sat,
+        community_id=community_row.id if community_row else None,
+        operator_fee_sat=operator_fee_sat,
+        community_fee_sat=community_fee_sat,
         invoice=invoice_str,
         status=SwapStatus.PENDING,
     )
@@ -118,6 +136,7 @@ def create_swap(db: Session, btc_address: str, amount_msat: int) -> Swap:
     db.commit()
     db.refresh(swap)
 
-    logger.info("Created swap %s for address %s, amount %d sat, %d sat minus miner fee",
-                swap.id, btc_address, amount_sat, gross_sat)
+    logger.info("Created swap %s for address %s, amount %d sat, %d sat minus miner fee, community %s (%d sat)",
+                swap.id, btc_address, amount_sat, gross_sat, community_row.name if community_row else None,
+                community_fee_sat)
     return swap

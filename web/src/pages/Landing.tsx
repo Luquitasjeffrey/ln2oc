@@ -233,6 +233,21 @@ export default function Landing() {
           </ul>
         </div>
       </section>
+      <section aria-labelledby="h-comm">
+        <h2 id="h-comm">
+          Comunidades
+        </h2>
+        <p className="read">
+          Un exchange, una wallet o un sistema de pagos Lightning puede ofrecerles retiro on-chain a sus usuarios con ln2oc, sin reinventar la rueda. A cambio de acercarnos esos usuarios, la comunidad se lleva una parte de la comisión (0,1 % de cada swap, de los 0,7 %). Para el usuario no cambia nada: paga lo mismo y recibe lo mismo.
+        </p>
+        <p className="read" style={{ color: "var(--muted)" }}>
+          El modelo de comunidades está inspirado en{" "}
+          <a href="https://github.com/lnp2pBot/bot">
+            lnp2pBot
+          </a>
+          , de @negrunch.
+        </p>
+      </section>
       <section aria-labelledby="h-ch">
         <h2 id="h-ch">
           Capítulos

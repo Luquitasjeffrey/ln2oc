@@ -14,7 +14,7 @@ Servicio de swap **Lightning → on-chain**. La Lightning Address es la direcci�
 
 1. **El más importante: se consigue mejor ratio de conversión Lightning → on-chain con cantidades grandes.** Pasar 5.000.000 sats de una vez cuesta, en %, bastante menos que de a 100.000 (CEX ≤ 0,2 % según volumen; cierre cooperativo ~0 %; Loop Out 0,05–0,5 %). El margen es esa diferencia contra la comisión. Si no se cumpliera, el valor sería la comodidad (algunos usuarios pagarían ~1 %).
 2. Montos chicos: hasta **1.000.000 sats** por swap (`MAX_SWAP_SAT`).
-3. Comisión **0,7 %** por defecto (`SWAP_FEE_RATE`, configurable). La **minería del payout la paga el usuario**, a la tasa del momento de pagar: la estimación de LND + 20 %, y no forma parte del %. Al crear el swap no se estima minería: se guarda `gross_sat` = monto − comisión. El operador gana la comisión más lo cobrado de más en minería (la diferencia siempre va para la casa, nunca en contra).
+3. Comisión **0,7 %** por defecto (`SWAP_FEE_RATE`, configurable). Si el swap viene de una **comunidad**, 0,1 % de eso (`COMMUNITY_FEE_RATE`) se le debe a ella (ver Comunidades). La **minería del payout la paga el usuario**, a la tasa del momento de pagar: la estimación de LND + 20 %, y no forma parte del %. Al crear el swap no se estima minería: se guarda `gross_sat` = monto − comisión. El operador gana la comisión más lo cobrado de más en minería (la diferencia siempre va para la casa, nunca en contra).
 4. **El operador repone el saldo on-chain a mano** (convertir en bloque, cerrar canales, Loop Out, CEX de paso). Automatizarlo no es parte de esta versión.
 5. **Servicio aislado**: nodo LND dedicado y dominio dedicado, con poca plata. Nunca un nodo principal ni uno que se use para otra cosa. Integrable en otros proyectos solo como servicio aparte.
 6. Cualquiera puede levantar su propia instancia (GPLv3).
@@ -32,7 +32,7 @@ EXPIRED                        FAILED (hold invoice cancelada: el pagador no pie
 MANUAL_REVIEW: todo lo que no es una regla de negocio → el proceso termina y no arranca mientras exista uno.
 ```
 
-1. `create_swap` (`app/swaps.py`): valida dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**), **no reserva saldo** (solo un fail-fast contra el saldo gastable menos la reserva) y emite la hold invoice.
+1. `create_swap` (`app/swaps.py`): valida comunidad (si vino), dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**) y el reparto `operator_fee_sat` / `community_fee_sat`, **no reserva saldo** (solo un fail-fast contra el saldo gastable menos la reserva) y emite la hold invoice.
 2. Polling: invoice `ACCEPTED` → `INVOICE_HOLD`; cancelada → `EXPIRED`; otra cosa → fatal.
 3. Cada vuelta (`tick`), si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), no se hace nada con los retenidos. Si no, `_pay` toma **todos** los `INVOICE_HOLD` en orden de llegada (cada invoice tiene que seguir `ACCEPTED`; si no, fatal):
    - dirección ya tomada → `FAILED`;
@@ -46,6 +46,17 @@ Invariantes (ver `app/worker.py`):
 - Nunca se paga sobre cambio sin confirmar: con cualquier tx de la wallet en el mempool no se paga nada (~1 payout por bloque).
 - `LndUnavailable` antes del primer settle → reintento; después → fatal. Excepción: un reembolso primero guarda `FAILED` y después cancela la invoice, así que cualquier falla del cancel → fatal (nadie lo reintentaría).
 - TLS hacia LND siempre verificado (falla cerrado).
+
+## Comunidades
+
+Un proveedor Lightning (exchange como un nodo de Mostro, wallet, sistema de pagos) les ofrece retiro on-chain a sus usuarios con ln2oc y se lleva `COMMUNITY_FEE_RATE` (0,1 %) **de adentro** de la comisión: el operador 0,6 %, el usuario no ve diferencia. Inspirado en lnp2pBot de @negrunch (crédito en README y landing).
+
+- **Hook cooperativo** sobre LNURL-pay: el integrador arma la URL con `?community=<name>` en `/.well-known/lnurlp/{addr}`; se valida y se arrastra al `callback` (`&community=<name>`), que la vuelve a validar. Sin el parámetro, la respuesta es idéntica byte a byte a la de siempre (test). Inválida o desconocida → 400. La metadata no cambia.
+- `community(id, name UNIQUE, contact, created_at)`: `name` es el slug público (`[a-z0-9-]{1,32}`), el id es interno. `contact` es texto libre privado: nunca sale por la API ni a los logs.
+- `Swap.community_id`, `operator_fee_sat`, `community_fee_sat` se congelan al crear (`split_service_fee`: la comunidad `floor(monto × tasa)`, el resto para la casa; suman `amount_sat` con `gross_sat`).
+- **La deuda no se guarda**: `owed = Σ community_fee_sat de los SUCCESS − Σ community_withdrawals`. El worker no sabe nada de comunidades. Un swap resuelto a mano a `SUCCESS` cuenta solo.
+- Alta y pagos a mano: `scripts/register_community.sh`, `scripts/withdraw_community_earnings.sh` (wrappers de `docker compose exec -it ln2oc python -m scripts.<x>`; la lógica en `app/community.py`). El retiro registra **el monto mostrado**, no "todo": un SUCCESS en el medio queda adeudado. El pago en sí (invoice o Lightning Address del admin) es manual.
+- Riesgo aceptado: cualquiera puede ponerse un `?community=` y devolverle 0,1 % a esa comunidad (p. ej. su admin, como descuento). Sin baja de comunidades hasta que haga falta.
 
 ## Decisiones tomadas (no volver a discutir sin que el usuario lo pida)
 
@@ -65,7 +76,8 @@ Invariantes (ver `app/worker.py`):
 | Archivo | Rol |
 |---|---|
 | `app/lnurl.py` | Endpoints LNURL-pay (`/.well-known/lnurlp/{addr}`, `/lnurlp/cb`), handlers sync, `Access-Control-Allow-Origin: *` (LUD-01) |
-| `app/swaps.py` | `create_swap` |
+| `app/swaps.py` | `create_swap`, `resolve_community` |
+| `app/community.py` | Comunidades: alta, deuda derivada (`owed_sat`), retiros. No mueve plata |
 | `app/worker.py` | Polling de invoices y payout de los retenidos en una tx; único componente que mueve plata |
 | `app/lnd.py` | Cliente gRPC; `LndUnavailable` vs `LndError` |
 | `app/tx.py` | Parser estricto de tx (txid, inputs, outputs, vsize) |
@@ -77,6 +89,7 @@ Invariantes (ver `app/worker.py`):
 | `app/main.py` | Arranque: lock, schema, MANUAL_REVIEW, red de LND, worker |
 | `app/config.py` | Settings con validación (falla al arrancar si algo está fuera de rango) |
 | `proto/`, `scripts/gen_protos.sh` | Protos de LND vendorizados; stubs en `app/lnrpc/` (no versionado) |
+| `scripts/register_community.{py,sh}`, `scripts/withdraw_community_earnings.{py,sh}` | Alta de comunidad y registro de pagos a comunidades, interactivos; el `.sh` los corre dentro del contenedor (el `Dockerfile` copia los `.py`) |
 | `scripts/lnaddr_pay.py` | Cliente de prueba: resuelve y valida una Lightning Address como una wallet (LUD-16/06/01) y la paga desde un LND propio |
 | `docs/testnet4.md` | Cómo levantar y probar una instancia en testnet4 |
 | `docs/prod.md` | Producción: checkout en `/home/lucas/ln2oc/prod/`, datos en `prod/data/` (ignorado), servicio `lnd` del compose |
@@ -121,11 +134,15 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 6. Alertas activas (halt, MANUAL_REVIEW, LND sin responder).
 7. Backup continuo de la SQLite (preimages, raw tx) y SCB de LND.
 8. Tope de payouts por hora/día y kill switch manual.
+16. **Validar el monto cobrado de la hold invoice contra el swap** (pedido del usuario, va después de comunidades): antes del settle, el `amt_paid_msat` de la invoice `ACCEPTED` tiene que ser exactamente `amount_sat × 1000`; si no, fatal. Defensa en profundidad para no pagar de más si aparece otro bug.
 9. Prueba en testnet4 con wallets reales. Preparada: `BITCOIN_NETWORK=testnet4`, guía en `docs/testnet4.md`, `.env.testnet4.example` y `scripts/lnaddr_pay.py` (paga una Lightning Address como una wallet, contra el dominio real). Falta: nodos, dominio con HTTPS y la prueba en sí. No se confirmó ninguna wallet móvil que pague Lightning Address en testnet4 (candidata: ZEUS remoto contra el LND pagador). Signet no está soportado.
 
 **Operativo**
 10. Nodo (hecho: servicio `lnd` del compose, ver `docs/prod.md`; falta crear la wallet y fondearlo) y dominio dedicados. Dominio y HTTPS hechos: túnel de Cloudflare `ln2oc` (servicio `cloudflared`, perfil `tunnel`). Hoy el túnel lo corre el compose de **dev (regtest)**: `https://ln2oc.com` sirve regtest hasta pasarlo a prod (un solo conector a la vez, ver `docs/prod.md`).
 11. Aviso cuando el saldo on-chain gastable baja de un umbral (la reposición en sí es manual).
+
+**Baja prioridad**
+17. **Front de comunidades**: explicar el hook `?community=` para integradores (página de operador/arquitectura, animación si aplica) y usar `community_fee_rate_bps` de `/api/info` (ya está en `InstanceInfo`). Hoy la landing solo tiene una sección corta con el crédito a lnp2pBot.
 
 **Para charlar**
 12. Seguimiento de confirmaciones (`SUCCESS` es terminal; una tx trabada no se detecta).

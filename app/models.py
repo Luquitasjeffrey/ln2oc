@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Index,
+    ForeignKey,
 )
 from app.db import Base
 
@@ -52,6 +53,12 @@ class Swap(Base):
     fee_rate_sat_vb = Column(Integer, nullable=True)  # rate the payout tx was funded at
     invoice = Column(Text, nullable=False)
 
+    # Service fee split, fixed at creation: amount_sat = gross_sat + operator_fee_sat + community_fee_sat.
+    # The community is owed community_fee_sat only once the swap is SUCCESS (see app/community.py).
+    community_id = Column(Integer, ForeignKey("communities.id"), nullable=True, index=True)
+    operator_fee_sat = Column(BigInteger, nullable=False)
+    community_fee_sat = Column(BigInteger, nullable=False)  # 0 without a community
+
     # Payout transaction (set on SUCCESS). Shared by every swap paid in the same tick:
     # one tx pays all of them, one output each.
     raw_tx = Column(Text, nullable=True)  # hex
@@ -66,3 +73,25 @@ class Swap(Base):
     __table_args__ = (
         Index("ix_swaps_status_created_at", "status", "created_at"),
     )
+
+
+class Community(Base):
+    """A Lightning service (exchange, wallet...) that sends us its users and gets a share
+    of the service fee. Registered by hand (scripts/register_community.sh) and paid by
+    hand: what we owe is derived, never stored (app.community.owed_sat)."""
+    __tablename__ = "communities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(32), unique=True, nullable=False)  # public slug: ?community=<name>
+    contact = Column(Text, nullable=False)  # free text for the operator to arrange payments. Private.
+    created_at = Column(DateTime, default=_now, nullable=False)
+
+
+class CommunityWithdrawal(Base):
+    """A payment of the operator to a community, made by hand outside the service."""
+    __tablename__ = "community_withdrawals"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    community_id = Column(Integer, ForeignKey("communities.id"), nullable=False, index=True)
+    amount_sat = Column(BigInteger, nullable=False)
+    created_at = Column(DateTime, default=_now, nullable=False)

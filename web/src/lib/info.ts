@@ -9,6 +9,7 @@ export type InstanceInfo = {
   network: Network;
   domain: string;
   swap_fee_rate_bps: number;
+  community_fee_rate_bps: number; // part of swap_fee_rate_bps owed to the community (?community=)
   min_swap_sat: number;
   max_swap_sat: number;
   min_payout_sat: number;
@@ -28,6 +29,7 @@ export const DEFAULT_INFO: InstanceInfo = {
   network: "mainnet",
   domain: "ln2oc.com",
   swap_fee_rate_bps: 70,
+  community_fee_rate_bps: 10,
   min_swap_sat: 1_000,
   max_swap_sat: 1_000_000,
   min_payout_sat: 546,

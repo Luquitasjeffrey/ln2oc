@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.db import get_db
 from app.halt import is_halted
-from app.swaps import SwapError, create_swap
+from app.swaps import SwapError, create_swap, resolve_community
 from app.validator import ADDRESS_RULE, validate_bitcoin_address
 
 router = APIRouter()
@@ -28,18 +28,30 @@ def _error(status_code: int, reason: str) -> JSONResponse:
 
 
 @router.get("/.well-known/lnurlp/{btc_address}")
-def lnurlp_metadata(btc_address: str):
+def lnurlp_metadata(
+    btc_address: str,
+    community: str | None = Query(None, description="Community the payer comes through (cooperative hook)"),
+    db: Session = Depends(get_db),
+):
     """
     LNURL-Pay step 1. Lightning Address: <bitcoin address>@<domain>.
+    A plain wallet sends nothing else. An integrating service may add ?community=<name>:
+    it is checked here and carried in the callback, the only thing that changes.
     """
     if is_halted():
         return _error(503, "Service halted")
+    try:
+        resolve_community(db, community)
+    except SwapError as e:
+        return _error(e.status_code, e.message)
     if not validate_bitcoin_address(btc_address, settings.BITCOIN_NETWORK):
         return _error(400, f"Invalid Bitcoin address for {settings.BITCOIN_NETWORK} ({ADDRESS_RULE}): {btc_address}")
     btc_address = btc_address.lower()  # bech32: same address; the Lightning Address name is lowercase
 
     base_url = settings.EXTERNAL_URL.rstrip("/")
     callback_url = f"{base_url}/lnurlp/cb?btc_address={btc_address}"
+    if community is not None:
+        callback_url += f"&community={community}"  # a valid name: nothing to escape
     metadata_json = f'[["text/plain", "Swap out BTC to {btc_address}"], ["text/identifier", "{btc_address}@{settings.DOMAIN}"]]'
 
     return _ok({
@@ -56,13 +68,14 @@ def lnurlp_metadata(btc_address: str):
 def lnurlp_callback(
     amount: int = Query(..., description="Amount in millisatoshis"),
     btc_address: str = Query(..., description="Destination Bitcoin address"),
+    community: str | None = Query(None, description="Community the payer comes through"),
     db: Session = Depends(get_db),
 ):
     """LNURL-Pay step 2: issue the hold invoice."""
     try:
-        swap = create_swap(db=db, btc_address=btc_address, amount_msat=amount)
+        swap = create_swap(db=db, btc_address=btc_address, amount_msat=amount, community=community)
     except SwapError as e:
-        logger.warning("Swap error for %s (%d msat): %s", btc_address, amount, e.message)
+        logger.warning("Swap error for %s (%d msat, community %r): %s", btc_address, amount, community, e.message)
         return _error(e.status_code, e.message)
     except Exception:
         logger.exception("Unexpected error in lnurlp callback")

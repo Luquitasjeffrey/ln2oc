@@ -266,6 +266,7 @@ async def test_complete_e2e_swap(env, client, payer):
     assert payment.result(timeout=60).payment_error == ""
     assert_paid_exactly_once(swap, dest)
     assert swap.gross_sat == 100_000 - round(100_000 * settings.SWAP_FEE_RATE)  # operator: exactly the fee
+    assert (swap.community_id, swap.community_fee_sat, swap.operator_fee_sat) == (None, 0, 100_000 - swap.gross_sat)
     mine_blocks(1)
     assert received_by(dest, minconf=1) == swap.payout_sat
 
