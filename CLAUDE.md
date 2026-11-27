@@ -33,7 +33,7 @@ MANUAL_REVIEW: todo lo que no es una regla de negocio → el proceso termina y n
 ```
 
 1. `create_swap` (`app/swaps.py`): valida comunidad (si vino), dirección y monto, calcula `gross_sat` = monto − comisión (**sin minería**) y el reparto `operator_fee_sat` / `community_fee_sat`, **no reserva saldo** (solo un fail-fast contra el saldo gastable menos la reserva) y emite la hold invoice.
-2. Polling: invoice `ACCEPTED` → `INVOICE_HOLD`; cancelada → `EXPIRED`; otra cosa → fatal.
+2. Polling: invoice `ACCEPTED` → `INVOICE_HOLD`; cancelada → `EXPIRED`; otra cosa → fatal. Cada lectura de una invoice `ACCEPTED`/`SETTLED` (al detectarla, antes del settle y después) exige `amt_paid_msat == amount_sat × 1000`; si no, fatal (defensa en profundidad: nunca pagar algo que no se cobró).
 3. Cada vuelta (`tick`), si la wallet on-chain tiene **alguna tx sin confirmar** (entrante o saliente, incluido el payout anterior; `GetTransactions`), no se hace nada con los retenidos. Si no, `_pay` toma **todos** los `INVOICE_HOLD` en orden de llegada (cada invoice tiene que seguir `ACCEPTED`; si no, fatal):
    - dirección ya tomada → `FAILED`;
    - se acumula `gross_sat` mientras entre en el saldo gastable menos `ONCHAIN_RESERVE_SAT` (10k: así el cambio nunca queda en dust); desde el primero que no entra, ese y **todos los que siguen** → `FAILED`;
@@ -69,6 +69,7 @@ Un proveedor Lightning (exchange como un nodo de Mostro, wallet, sistema de pago
 - Sitio web: **lo sirve otro servidor** (nginx de `web/`). FastAPI no sirve archivos del front: solo redirige `GET /` (y HEAD) a `FRONTEND_URL`. El front lee `/api/info`.
 - Boltz está caído (desde agosto de 2026); no contarlo como opción de reposición.
 - Errores LNURL: **códigos HTTP normales** (400/503/502/500) con `{"status":"ERROR","reason":...}` en el cuerpo, no HTTP 200 (decisión del usuario, aunque LUD-01 diga que el código no importa).
+- Monto cobrado ≠ monto del swap, **de menos o de más** → fatal (`MANUAL_REVIEW` + halt), nada liquidado; el remedio es cancelar la invoice a mano (el pagador recupera todo). Aunque BOLT 4 permite sobrepagar hasta 2× (p. ej. shadow routing de CLN), el usuario prefiere enterarse de forma notoria a que nadie pierda un sat (decisión del usuario).
 - Lightning Address: **solo direcciones bech32** (`bc1q…`, `bc1p…`) para swaps nuevos; las legacy no, porque LUD-16 exige minúsculas (decisión del usuario).
 
 ## Estructura
@@ -134,7 +135,6 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 6. Alertas activas (halt, MANUAL_REVIEW, LND sin responder).
 7. Backup continuo de la SQLite (preimages, raw tx) y SCB de LND.
 8. Tope de payouts por hora/día y kill switch manual.
-16. **Validar el monto cobrado de la hold invoice contra el swap** (pedido del usuario, va después de comunidades): antes del settle, el `amt_paid_msat` de la invoice `ACCEPTED` tiene que ser exactamente `amount_sat × 1000`; si no, fatal. Defensa en profundidad para no pagar de más si aparece otro bug.
 9. Prueba en testnet4 con wallets reales. Preparada: `BITCOIN_NETWORK=testnet4`, guía en `docs/testnet4.md`, `.env.testnet4.example` y `scripts/lnaddr_pay.py` (paga una Lightning Address como una wallet, contra el dominio real). Falta: nodos, dominio con HTTPS y la prueba en sí. No se confirmó ninguna wallet móvil que pague Lightning Address en testnet4 (candidata: ZEUS remoto contra el LND pagador). Signet no está soportado.
 
 **Operativo**
@@ -147,4 +147,4 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 13. `/healthz` real (worker vivo, LND accesible y sincronizado).
 14. **Wallet con una tx que nunca confirma frena todos los payouts** (baja prioridad: al atacante le cuesta plata y no gana nada). Ataque: mandar una tx chica a nuestra dirección de cambio (visible en cualquier payout) y reemplazarla por RBF; btcwallet puede seguir mostrándola sin confirmar para siempre. Lo mismo pasa sin atacante si nuestro payout se traba por una suba de minería. Efecto: los pagos quedan retenidos hasta que LND cancela los HTLC cerca de su vencimiento, y eso es fatal (`MANUAL_REVIEW`); mientras tanto los HTLC traban canales. No se pierden fondos. Opciones: frenar solo por txs que gastan UTXOs propios (`previous_outpoints[].is_our_output`; los depósitos sin confirmar no afectan con `ONCHAIN_MIN_CONFS=1`), 503 en `create_swap` cuando el worker lleva X min frenado, tope de espera menor que el CLTV, alerta (6). Remedio manual: `lncli wallet removetx`.
 
-Orden propuesto: 9 (testnet4) → 5 → 6, 11 → 7, 8; el 4 según lo que muestre la prueba. (Hechos y pusheados: el 1, polling síncrono, y el 2, sitio React en `web/` con `/api/info`.)
+Orden propuesto: 9 (testnet4) → 5 → 6, 11 → 7, 8; el 4 según lo que muestre la prueba. (Hechos: el 1, polling síncrono; el 2, sitio React en `web/` con `/api/info`; el 16, monto cobrado = monto del swap.)

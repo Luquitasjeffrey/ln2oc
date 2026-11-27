@@ -352,10 +352,17 @@ class SwapWorker:
         return int(info.block_height)
 
     def _invoice_state(self, swap: Swap):
+        """The invoice's state; a paid one (ACCEPTED or SETTLED) must have been paid exactly
+        the swap's amount, or we would pay out something nobody paid for (fatal)."""
         try:
-            return self.lnd.lookup_invoice(bytes.fromhex(swap.payment_hash)).state
+            invoice = self.lnd.lookup_invoice(bytes.fromhex(swap.payment_hash))
         except LndError as e:
             raise FatalSwapError(swap.id, f"cannot look up our own invoice: {e}")
+        if (invoice.state in (InvoiceState.ACCEPTED, InvoiceState.SETTLED)
+                and invoice.amt_paid_msat != swap.amount_sat * 1000):
+            raise FatalSwapError(swap.id, f"invoice {InvoiceState.Name(invoice.state)} paid {invoice.amt_paid_msat} "
+                                          f"msat, the swap is for {swap.amount_sat * 1000} msat")
+        return invoice.state
 
     def _spendable_sat(self) -> int:
         """On-chain balance the wallet can spend now (LND keeps the anchor reserve)."""

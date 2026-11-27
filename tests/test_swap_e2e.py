@@ -14,7 +14,7 @@ from app.config import settings
 from app.fees import current_fee_rate_sat_per_vbyte
 from app.lnd import InvoiceState, LndUnavailable, lnd_client
 from app.lnrpc import lightning_pb2 as ln
-from app.models import SwapStatus
+from app.models import Swap, SwapStatus
 from app.swaps import SwapError, create_swap
 from app.tx import parse_tx
 from app.validator import address_to_script
@@ -504,6 +504,36 @@ def test_invoice_settled_outside_flow_is_fatal(env, payer):
     # While anything is in MANUAL_REVIEW the worker refuses to do anything else.
     env["worker"].run_tick_guarded()
     assert "MANUAL_REVIEW" in env["fatal"].reasons[-1]
+
+
+def _set_amount(Session, swap_id: int, amount_sat: int) -> None:
+    """Simulates a bug: the swap row no longer matches what its invoice was paid."""
+    with Session() as db:
+        db.get(Swap, swap_id).amount_sat = amount_sat
+        db.commit()
+
+
+@pytest.mark.parametrize("held_first", [False, True], ids=["on-detection", "before-settle"])
+def test_invoice_paid_other_than_the_swap_amount_is_fatal(env, payer, held_first):
+    """Defense in depth: a held payment that is not exactly the swap's amount is never
+    settled nor paid out, whether it is caught when detected or right before the settle."""
+    swap_id, invoice = insert_swap(env["Session"], amount_sat=50_000, gross_sat=40_000, address=new_dest_address())
+    payment = payer.pay(invoice)
+    _wait_invoice_state(swap_id, env["Session"], InvoiceState.ACCEPTED)
+    if held_first:  # detected while the wallet is busy, the mismatch shows up while held
+        send_to_kross_unconfirmed(0.001)
+        assert env["worker"].run_tick_guarded() is True
+        assert get_swap(env["Session"], swap_id).status == SwapStatus.INVOICE_HOLD
+        mine_blocks(1)
+    _set_amount(env["Session"], swap_id, 50_001)
+
+    swap = tick_until(env, swap_id, _DONE)
+    assert env["fatal"].reasons and "paid 50000000 msat, the swap is for 50001000 msat" in env["fatal"].reasons[0]
+    assert swap.status == SwapStatus.MANUAL_REVIEW and swap.raw_tx is None
+    payment_hash = bytes.fromhex(swap.payment_hash)
+    assert lnd_client.lookup_invoice(payment_hash).state == InvoiceState.ACCEPTED  # nothing settled
+    lnd_client.cancel_invoice(payment_hash)  # the manual fix: refund the payer
+    assert payment.result(timeout=60).payment_error != ""
 
 
 def test_lnd_rejecting_the_fee_estimate_is_manual_review_before_settling(env, payer, monkeypatch):
