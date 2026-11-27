@@ -18,3 +18,9 @@ export const fmt = (n: number) => nf.format(n);
 export function pct(bps: number): string {
   return `${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(bps / 100)} %`;
 }
+
+/** The community's share of the service fee (app/fees.py split_service_fee): floor, the
+ * rounding goes to the operator. */
+export function communityFeeSat(amountSat: number, communityFeeRateBps: number): number {
+  return Math.floor((amountSat * communityFeeRateBps) / 10_000);
+}

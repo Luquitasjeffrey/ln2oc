@@ -186,6 +186,9 @@ export default function Usuario() {
           <b className="btc num">{fmt(x.payout)} sats</b>
           . El número exacto se sabe al enviar tu pago: el nodo estima la minería de la tx real a la tasa de ese momento, se le suma un 20 % y se reparte en partes iguales entre los pagos de esa tx. La minería se descuenta siempre de tu pago, y lo cobrado de más queda para el servicio: nunca pierde con ella. Si con tu parte el payout quedara por debajo del dust ({fmt(x.info.min_payout_sat)} sats), se cancela la invoice y tus sats no salen de tu wallet.
         </p>
+        <p>
+          Si llegaste por una <a href="/comunidades/">comunidad</a> (tu exchange o tu wallet integró ln2oc), no cambia nada para vos: la comisión es la misma, y la parte de la comunidad sale de lo que se queda el operador.
+        </p>
       </section>
       <section aria-labelledby="h-what">
         <h2 id="h-what">
@@ -357,8 +360,8 @@ export default function Usuario() {
         <a href="/">
           ← ln2oc
         </a>
-        <a href="/operadores/">
-          Paso a paso del operador →
+        <a href="/comunidades/">
+          Community leaders →
         </a>
       </div>
     </>

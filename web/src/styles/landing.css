@@ -47,6 +47,9 @@
   .use { padding: 1.2rem; border-radius: var(--radius); background: var(--surface); border: 1px solid var(--line); }
   .use h3 { margin-top: 0.4rem; font-size: 1.15rem; }
   .use p { color: var(--muted); font-size: 0.97rem; margin-top: 0.45rem; }
+  .isolated.comm { background: var(--ln-soft); }
+  .isolated.comm .eyebrow { color: var(--ln); }
+  .isolated .ledger { margin-top: 1rem; }
   .isolated { display: grid; grid-template-columns: 1fr 2fr; gap: 1rem 2.5rem; margin-top: 3rem; padding: 1.75rem; border-radius: var(--radius); background: var(--btc-soft); }
   @media (max-width: 760px) { .isolated { grid-template-columns: 1fr; padding: 1.25rem; } }
   .isolated h2 { margin-top: 0; }

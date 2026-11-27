@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 
 // Multi-page static site: every page is a real index.html, so any static server (or the
 // reverse proxy) serves it without SPA fallbacks.
-const pages = ["index", "usuario", "operadores", "flujo", "arquitectura"];
+const pages = ["index", "usuario", "comunidades", "operadores", "desarrolladores", "flujo", "arquitectura"];
 
 export default defineConfig({
   plugins: [react()],

@@ -40,7 +40,7 @@ export function mountFlow(root) {
         { k: "actors",  a: 3,    b: 6,    step: "Los actores",   title: "Los actores",
           cap: "Tres lugares: la billetera Lightning de quien paga, un nodo LN dedicado solo a ln2oc y tu cold wallet." },
         { k: "invoice", a: 6,    b: 11,   step: "Paso 1",        title: "Pedir la invoice",
-          cap: "Tu wallet pide la invoice. El nodo genera un secreto, el preimage, y emite una hold invoice atada a su hash." },
+          cap: "Tu wallet pide la invoice. Si el pago viene por una comunidad, su servicio agrega ?community=<handle> al pedido, y nada más cambia. El nodo genera un secreto, el preimage, y emite una hold invoice atada a su hash." },
         { k: "pay",     a: 11,   b: 16.5, step: "Paso 2",        title: "El pago queda retenido",
           cap: "Pagás. El HTLC llega y la invoice pasa a ACCEPTED: la plata está retenida, nadie la cobró todavía. El worker lo ve en su próxima consulta de invoices pendientes (LookupInvoice) y el swap pasa a INVOICE_HOLD." },
         { k: "check",   a: 16.5, b: 20,   step: "Paso 3",        title: "Chequear el saldo",
@@ -52,7 +52,7 @@ export function mountFlow(root) {
         { k: "publish", a: 30.5, b: 36,   step: "Paso 6",        title: "Publicar y confirmar",
           cap: "Se publica esa tx y el swap pasa a SUCCESS. Si algo falla desde el cobro, el servicio se frena y lo revisa una persona: nunca se reintenta a ciegas. Entra en un bloque y los sats son tuyos, con tus llaves." },
         { k: "ledger",  a: 36,   b: 42,   step: "Balance",       title: "Quién terminó con qué",
-          cap: "Nadie creó sats: cambiaron de capa. El operador gana la comisión y vos tenés tus sats en frío." },
+          cap: "Nadie creó sats: cambiaron de capa. Vos tenés tus sats en frío. De los 700 de comisión, 600 son del operador y 100 de la comunidad por la que llegó el pago, que el operador le liquida a mano." },
       ],
       chips: ["PENDING", "INVOICE_HOLD", "SUCCESS"],
       chipAt: [[9.5, 0], [14, 1], [33.3, 2]],
@@ -431,25 +431,28 @@ export function mountFlow(root) {
 
   function drawLedger(p, fail) {
     ctx.save(); ctx.globalAlpha = 0.9 * p; ctx.fillStyle = C.bg; ctx.fillRect(0, 96, W, 470); ctx.restore();
-    const cols = [520, 760, 1000]; const rowY = [250, 312, 374];
+    // Four parties: the swap came through a community, which is owed 0.1 % of the 0.7 % fee.
+    const cols = [480, 680, 870, 1060]; const rowY = [240, 294, 348, 414];
     const a = p;
-    text("Pagador", cols[0], 190, { font: `600 24px ${SERIF}`, align: "center", alpha: a });
-    text("Operador", cols[1], 190, { font: `600 24px ${SERIF}`, align: "center", alpha: a });
-    text("Vos (cold wallet)", cols[2], 190, { font: `600 24px ${SERIF}`, align: "center", alpha: a });
-    text("Lightning", 300, rowY[0], { font: `15px ${MONO}`, color: C.yellow, alpha: a });
-    text("on-chain", 300, rowY[1], { font: `15px ${MONO}`, color: C.gold, alpha: a });
-    text("neto", 300, rowY[2], { font: `15px ${MONO}`, color: C.dim, alpha: a });
+    ["Pagador", "Operador", "Comunidad", "Vos (cold wallet)"].forEach((h, c) =>
+      text(h, cols[c], 186, { font: `600 22px ${SERIF}`, align: "center", alpha: a }));
+    text("Lightning", 260, rowY[0], { font: `15px ${MONO}`, color: C.yellow, alpha: a });
+    text("on-chain", 260, rowY[1], { font: `15px ${MONO}`, color: C.gold, alpha: a });
+    text("comisión 0,1 %", 260, rowY[2] - 8, { font: `15px ${MONO}`, color: C.blue, alpha: a });
+    text("(se paga a mano)", 260, rowY[2] + 12, { font: `12px ${MONO}`, color: C.dim, alpha: a });
+    text("neto", 260, rowY[3], { font: `15px ${MONO}`, color: C.dim, alpha: a });
     ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = C.faint; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(290, 340); ctx.lineTo(1120, 340); ctx.stroke(); ctx.restore();
+    ctx.beginPath(); ctx.moveTo(250, 380); ctx.lineTo(1160, 380); ctx.stroke(); ctx.restore();
     const v = fail
-      ? [["0", "0", "—"], ["—", "0", "0"], ["0", "0", "0"]]
-      : [["−100.000", "+100.000", "—"], ["—", "−99.300", "+99.169"], ["−100.000", "+700", "+99.169"]];
+      ? [["0", "0", "—", "—"], ["—", "0", "—", "0"], ["—", "0", "0", "—"], ["0", "0", "0", "0"]]
+      : [["−100.000", "+100.000", "—", "—"], ["—", "−99.300", "—", "+99.169"],
+         ["—", "−100", "+100", "—"], ["−100.000", "+600", "+100", "+99.169"]];
     const colr = (s) => (s.startsWith("+") ? C.green : s.startsWith("−") ? C.red : C.dim);
     v.forEach((row, r) => row.forEach((s, c) => {
-      const w = P("ledger", 0.15 + 0.1 * r, 0.35 + 0.1 * r);
-      text(s, cols[c], rowY[r], { font: `${r === 2 ? "600 " : ""}26px ${SERIF}`, color: colr(s), align: "center", write: w, alpha: a });
+      const w = P("ledger", 0.15 + 0.08 * r, 0.35 + 0.08 * r);
+      text(s, cols[c], rowY[r], { font: `${r === 3 ? "600 " : ""}26px ${SERIF}`, color: colr(s), align: "center", write: w, alpha: a });
     }));
-    text(fail ? "Nadie perdió un sat." : "Los 131 restantes se los llevaron los mineros, a 1 sat/vB.", W / 2, 470,
+    text(fail ? "Nadie perdió un sat." : "Los 131 restantes se los llevaron los mineros, a 1 sat/vB.", W / 2, 486,
       { font: `italic 22px ${SERIF}`, color: C.dim, align: "center", alpha: P("ledger", 0.5, 0.7) });
   }
 

@@ -6,13 +6,18 @@
 <tu dirección bc1…>@ln2oc.com
 ```
 
+Y si corrés un servicio Lightning con usuarios (un exchange P2P, una wallet, un sistema de pagos), podés ofrecerles retiro on-chain sin construirlo: tu **comunidad** se lleva una parte de la comisión de cada swap que llega por vos, y para tus usuarios no cambia nada.
+
 Servicio minimalista en Python 3.12 + FastAPI, SQLite, la API gRPC de LND y Docker Compose. Código GPLv3: cualquiera puede levantar su propia instancia.
 
 ## ¿Quién sos?
 
-- [👤 **Usuario**](#-usuario): querés recibir o mandarte sats por Lightning y que terminen en tu cold wallet.
-- [🧑‍🔧 **Operador**](#-operador): querés correr tu propia instancia y ganar una comisión por cada swap.
-- [🛠️ **Desarrollador**](#-cómo-funciona-por-dentro): querés entender el flujo, correrlo o testearlo.
+ln2oc apunta a tres tipos de usuarios, más quien quiera leer el código:
+
+- [👤 **Usuarios finales**](#-usuario): querés recibir o mandarte sats por Lightning y que terminen en tu cold wallet.
+- [🤝 **Community leaders**](#-community-leaders): corrés un servicio Lightning con usuarios y querés ofrecerles retiro on-chain, llevándote una parte de la comisión.
+- [🧑‍🔧 **Operadores**](#-operador): querés correr tu propia instancia y ganar una comisión por cada swap.
+- [🛠️ **Desarrolladores**](#-cómo-funciona-por-dentro): querés entender el flujo, correrlo, testearlo o integrarlo. El código está en [github.com/Luquitasjeffrey/ln2oc](https://github.com/Luquitasjeffrey/ln2oc).
 
 ---
 
@@ -51,6 +56,27 @@ Montos: hasta **1.000.000 sats** por swap (`MAX_SWAP_SAT`). Está pensado para m
 - ✅ **Que el nodo tenga fondos: no hace falta confiar.** Usa *hold invoices*: tu pago queda retenido y el nodo lo cobra recién cuando tiene con qué pagarte on-chain. Si no le alcanza el saldo, cancela la invoice y los sats vuelven a tu wallet.
 - ✅ **Que te paguen mal o dos veces:** antes de publicar, el servicio verifica la tx firmada (destino, monto, inputs). Nunca reintenta un pago: ante cualquier duda se frena y lo revisa una persona.
 - ⚠️ **Los segundos entre el cobro y la publicación:** no es un swap atómico. Entre que el nodo cobra tu pago y publica tu tx, el operador tiene tu plata. Si algo falla ahí, el servicio se frena y el operador te debe el payout. Es custodia por segundos, no por días.
+
+---
+
+## 🤝 Community leaders
+
+Si corrés un exchange P2P (por ejemplo, un nodo de Mostro), una wallet o un sistema de pagos Lightning, tus usuarios pueden retirar on-chain con ln2oc. Vos aportás los usuarios, y por cada swap que llega por tu comunidad te corresponde **un % de incentivo** (por defecto 0,1 %, de los 0,7 % de comisión; cada instancia fija los suyos). Sale de lo que se queda el operador: tus usuarios pagan lo mismo que cualquiera.
+
+Cómo crear tu comunidad:
+
+1. **Contactá al operador** de la instancia y dejale un contacto (Telegram, mail…), solo para coordinar los pagos.
+2. **El operador te registra y te da tu handle**: el nombre de tu comunidad, en minúsculas, números y guiones (por ejemplo `mi-comunidad`).
+3. **Agregá el handle en tu integración**: tu servicio resuelve la Lightning Address del usuario como siempre y le suma `?community=<handle>` a la URL de LNURL-pay:
+   ```text
+   GET https://ln2oc.com/.well-known/lnurlp/bc1q…?community=mi-comunidad
+   ```
+   El servicio lo arrastra al callback y el swap queda asociado a tu comunidad. Un handle inexistente da error 400.
+4. **Cobrá lo acumulado**: el operador te liquida a mano lo adeudado de tus swaps exitosos; le pasás una invoice o una Lightning Address.
+
+Para tus usuarios no cambia nada: usan la misma `bc1q…@ln2oc.com`, pagan lo mismo y reciben lo mismo. Una wallet común que no manda el parámetro sigue funcionando igual. En qué confiás: en el operador, para la cuenta y el pago (es una deuda de palabra, no un pago automático).
+
+El modelo de comunidades está inspirado en [lnp2pBot](https://github.com/lnp2pBot/bot), de [@grunch](https://github.com/grunch).
 
 ---
 
@@ -112,7 +138,7 @@ scripts/withdraw_community_earnings.sh   # muestra lo adeudado; si pagás ahora,
 
 Después del retiro, le pedís al admin de la comunidad una invoice o una Lightning Address y le pagás a mano.
 
-La inspiración del modelo de comunidades viene de [lnp2pBot](https://github.com/lnp2pBot/bot), de @negrunch.
+La inspiración del modelo de comunidades viene de [lnp2pBot](https://github.com/lnp2pBot/bot), de [@grunch](https://github.com/grunch). Del lado del community leader, ver [🤝 Community leaders](#-community-leaders).
 
 ### Qué necesitás
 

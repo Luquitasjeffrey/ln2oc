@@ -1,6 +1,6 @@
 # Sitio web de ln2oc (`web/`)
 
-Sitio estático React 18 + Vite 5 + TypeScript, **multi-página** (no SPA): `/`, `/usuario/`, `/flujo/`, `/operadores/`, `/arquitectura/`. Lo sirve su propio nginx (`Dockerfile`, `nginx.conf`, puerto 8080, `try_files ... =404`). FastAPI no sirve nada del front: solo redirige `GET /` a `FRONTEND_URL`.
+Sitio estático React 18 + Vite 5 + TypeScript, **multi-página** (no SPA): `/`, `/usuario/`, `/comunidades/` (community leaders), `/operadores/`, `/desarrolladores/`, `/flujo/`, `/arquitectura/`. El nav va por público (usuarios, community leaders, operadores, desarrolladores) y después lo de adentro (animación, arquitectura). Lo sirve su propio nginx (`Dockerfile`, `nginx.conf`, puerto 8080, `try_files ... =404`). FastAPI no sirve nada del front: solo redirige `GET /` a `FRONTEND_URL`.
 
 ```bash
 npm ci

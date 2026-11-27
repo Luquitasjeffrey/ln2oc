@@ -59,8 +59,8 @@ export default function Flujo() {
         </span>
       </div>
       <div className="pager">
-        <a href="/operadores/">
-          ← Paso a paso del operador
+        <a href="/desarrolladores/">
+          ← Desarrolladores
         </a>
         <a href="/arquitectura/">
           Arquitectura →

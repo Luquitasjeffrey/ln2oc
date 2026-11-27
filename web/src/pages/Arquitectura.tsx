@@ -400,7 +400,7 @@ export default function Arquitectura() {
                   app/lnurl.py
                 </td>
                 <td>
-                  Endpoints LNURL-pay. Validan dirección y monto, y devuelven la hold invoice.
+                  Endpoints LNURL-pay. Validan dirección y monto, y devuelven la hold invoice. Un <code>?community=&lt;handle&gt;</code> opcional se valida y viaja al callback; sin él, la respuesta es la de siempre.
                 </td>
               </tr>
               <tr>
@@ -412,7 +412,23 @@ export default function Arquitectura() {
                   <code>
                     PENDING
                   </code>
-                  . No reserva saldo para el swap: el compromiso se toma al llegar el pago.
+                  . No reserva saldo para el swap: el compromiso se toma al llegar el pago. Guarda el reparto de la comisión: <code>operator_fee_sat</code> y <code>community_fee_sat</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  app/community.py
+                </td>
+                <td>
+                  Comunidades: alta, retiros y lo adeudado, que se calcula (swaps <code>SUCCESS</code> menos retiros) y nunca se guarda como contador. No mueve plata: el worker no sabe nada de comunidades.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  scripts/register_community.sh · withdraw_community_earnings.sh
+                </td>
+                <td>
+                  Scripts interactivos del operador, dentro del contenedor: registrar una comunidad y registrar un pago hecho a mano.
                 </td>
               </tr>
               <tr>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { payoutSat, pct, serviceFeeSat } from "./fees";
+import { communityFeeSat, payoutSat, pct, serviceFeeSat } from "./fees";
 
 describe("fees (mirrors app/fees.py calculate_gross)", () => {
   it("matches the documented 100.000 sats example", () => {
@@ -16,5 +16,11 @@ describe("fees (mirrors app/fees.py calculate_gross)", () => {
   it("formats basis points as a percentage", () => {
     expect(pct(70).replace(/\s/g, " ")).toBe("0,7 %");
     expect(pct(125).replace(/\s/g, " ")).toBe("1,25 %");
+  });
+
+  it("splits the fee with the community like the service (rounding for the operator)", () => {
+    expect(communityFeeSat(100_000, 10)).toBe(100);
+    expect(serviceFeeSat(100_000, 70) - communityFeeSat(100_000, 10)).toBe(600);
+    expect(communityFeeSat(1_999, 10)).toBe(1);
   });
 });

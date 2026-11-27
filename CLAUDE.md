@@ -49,7 +49,7 @@ Invariantes (ver `app/worker.py`):
 
 ## Comunidades
 
-Un proveedor Lightning (exchange como un nodo de Mostro, wallet, sistema de pagos) les ofrece retiro on-chain a sus usuarios con ln2oc y se lleva `COMMUNITY_FEE_RATE` (0,1 %) **de adentro** de la comisión: el operador 0,6 %, el usuario no ve diferencia. Inspirado en lnp2pBot de @negrunch (crédito en README y landing).
+Un proveedor Lightning (exchange como un nodo de Mostro, wallet, sistema de pagos) les ofrece retiro on-chain a sus usuarios con ln2oc y se lleva `COMMUNITY_FEE_RATE` (0,1 %) **de adentro** de la comisión: el operador 0,6 %, el usuario no ve diferencia. Inspirado en lnp2pBot de @grunch (github.com/grunch; crédito en README, landing, página de comunidades y artifact). Públicos: usuarios finales, community leaders y operadores, más desarrolladores.
 
 - **Hook cooperativo** sobre LNURL-pay: el integrador arma la URL con `?community=<name>` en `/.well-known/lnurlp/{addr}`; se valida y se arrastra al `callback` (`&community=<name>`), que la vuelve a validar. Sin el parámetro, la respuesta es idéntica byte a byte a la de siempre (test). Inválida o desconocida → 400. La metadata no cambia.
 - `community(id, name UNIQUE, contact, created_at)`: `name` es el slug público (`[a-z0-9-]{1,32}`), el id es interno. `contact` es texto libre privado: nunca sale por la API ni a los logs.
@@ -118,7 +118,7 @@ No hay migraciones: con un cambio de schema, una DB vieja hace que el servicio s
 
 ## Artifact de documentación
 
-Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con supuestos, usuario, operador, animación `flujo.html`, arquitectura). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). El sitio `web/` porta este contenido (páginas en `web/src/pages/`, animación en `web/src/flujo/animation.js`): si cambia el flujo, actualizar ambos. Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
+Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (páginas: índice con públicos y supuestos, `usuario.html`, `comunidades.html` (community leaders), `operador.html`, `desarrolladores.html`, animación `flujo.html`, `arquitectura.html`). Para editarlo en otra sesión: leerlo con la acción `read`/`read_file` del Artifact tool y republicar con su `url` (las fuentes locales estaban en el scratchpad de la sesión anterior y pueden no existir). El sitio `web/` porta este contenido (páginas en `web/src/pages/`, animación en `web/src/flujo/animation.js`): si cambia el flujo, actualizar ambos. Si el código cambia el flujo, actualizar la animación "por dentro" y la máquina de estados de `arquitectura.html`.
 
 ## TODO priorizado
 
@@ -141,8 +141,6 @@ Artifact maestro "ln2oc": https://claude.ai/artifact/6LgQxcXLa1o3efcnLxiFkx (pá
 10. Nodo (hecho: servicio `lnd` del compose, ver `docs/prod.md`; falta crear la wallet y fondearlo) y dominio dedicados. Dominio y HTTPS hechos: túnel de Cloudflare `ln2oc` (servicio `cloudflared`, perfil `tunnel`). Hoy el túnel lo corre el compose de **dev (regtest)**: `https://ln2oc.com` sirve regtest hasta pasarlo a prod (un solo conector a la vez, ver `docs/prod.md`).
 11. Aviso cuando el saldo on-chain gastable baja de un umbral (la reposición en sí es manual).
 
-**Baja prioridad**
-17. **Front de comunidades**: explicar el hook `?community=` para integradores (página de operador/arquitectura, animación si aplica) y usar `community_fee_rate_bps` de `/api/info` (ya está en `InstanceInfo`). Hoy la landing solo tiene una sección corta con el crédito a lnp2pBot.
 
 **Para charlar**
 12. Seguimiento de confirmaciones (`SUCCESS` es terminal; una tx trabada no se detecta).

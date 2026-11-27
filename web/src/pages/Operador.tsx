@@ -197,7 +197,7 @@ export default function Operador() {
           </table>
         </div>
         <p style={{ color: "var(--muted)", fontSize: "var(--step--1)" }}>
-          Porcentajes ilustrativos y sin minería: la de cada payout la paga el usuario y no entra en esta cuenta. La comisión se configura con{" "}
+          Porcentajes ilustrativos y sin minería: la de cada payout la paga el usuario y no entra en esta cuenta. Los swaps que llegan por una <a href="#h-comm">comunidad</a> te dejan 0,6 % en vez de 0,7 %. La comisión se configura con{" "}
           <code>
             SWAP_FEE_RATE
           </code>
@@ -215,6 +215,21 @@ export default function Operador() {
             Automatizar la reposición del saldo on-chain no está resuelto y no es parte de esta versión. Mientras tanto: vigilá el saldo, juntá volumen en Lightning y convertilo de a mucho, cerrando canales en forma cooperativa o con un swap-out grande con quien te dé mejor precio.
           </p>
         </div>
+      </section>
+      <section className="read" aria-labelledby="h-comm">
+        <h2 id="h-comm">
+          Comunidades
+        </h2>
+        <p>
+          Un exchange, una wallet o un sistema de pagos Lightning te trae sus usuarios, y a cambio le corresponde <code>COMMUNITY_FEE_RATE</code> (0,1 % por defecto) de cada swap que llega por ella. Sale de tu comisión: el usuario paga lo mismo, y vos te quedás con 0,6 % en esos swaps.
+        </p>
+        <p>
+          El community leader te contacta, y vos lo registrás y le das su <b>handle</b>: el nombre de la comunidad, por ejemplo <code>mi-comunidad</code>. Su servicio lo agrega a cada pedido LNURL (<code>?community=mi-comunidad</code>). Cada swap guarda <code>operator_fee_sat</code> y <code>community_fee_sat</code>, y lo adeudado es la suma de los swaps <code>SUCCESS</code> de esa comunidad menos lo que ya le pagaste.
+        </p>
+        <pre><span className="c">{"# alta: pide el handle (a-z, 0-9, '-') y un contacto en texto libre"}</span>{"\nscripts/register_community.sh\n"}<span className="c">{"# cuánto le debés; si pagás ahora, registra el pago"}</span>{"\nscripts/withdraw_community_earnings.sh"}</pre>
+        <p>
+          Los dos scripts son interactivos y corren dentro del contenedor. <b>El pago es manual</b>: el script registra el monto que te mostró y vos le pedís al community leader una invoice o una Lightning Address para liquidarlo. El contacto queda solo en tu base: no sale por la API.
+        </p>
       </section>
       <section aria-labelledby="h-refill">
         <h2 id="h-refill" className="read">
@@ -580,7 +595,7 @@ export default function Operador() {
               Configurá ln2oc
             </h3>
             {" "}
-            <pre><span className="c">{"# .env"}</span>{"\nLND_GRPC_HOST=127.0.0.1:10009\nLND_MACAROON_PATH=/ruta/admin.macaroon\nLND_TLS_CERT_PATH=/ruta/tls.cert\nBITCOIN_NETWORK=mainnet\nSWAP_FEE_RATE=0.007      "}<span className="c">{"# 0,7 % por defecto, configurable"}</span>{"\nMIN_SWAP_SAT=10000\nMAX_SWAP_SAT=1000000     "}<span className="c">{"# montos chicos: hasta 1.000.000 sats"}</span>{"\nDOMAIN=ln2oc.com\nEXTERNAL_URL=https://ln2oc.com\nFRONTEND_URL=https://www.ln2oc.com   "}<span className="c">{"# el sitio, en otro servidor"}</span>{"\nINVOICE_POLL_INTERVAL_SECONDS=60  "}<span className="c">{"# cada cuánto mira los pagos"}</span></pre>
+            <pre><span className="c">{"# .env"}</span>{"\nLND_GRPC_HOST=127.0.0.1:10009\nLND_MACAROON_PATH=/ruta/admin.macaroon\nLND_TLS_CERT_PATH=/ruta/tls.cert\nBITCOIN_NETWORK=mainnet\nSWAP_FEE_RATE=0.007      "}<span className="c">{"# 0,7 % por defecto, configurable"}</span>{"\nCOMMUNITY_FEE_RATE=0.001 "}<span className="c">{"# parte de la comisión para la comunidad del swap"}</span>{"\nMIN_SWAP_SAT=10000\nMAX_SWAP_SAT=1000000     "}<span className="c">{"# montos chicos: hasta 1.000.000 sats"}</span>{"\nDOMAIN=ln2oc.com\nEXTERNAL_URL=https://ln2oc.com\nFRONTEND_URL=https://www.ln2oc.com   "}<span className="c">{"# el sitio, en otro servidor"}</span>{"\nINVOICE_POLL_INTERVAL_SECONDS=60  "}<span className="c">{"# cada cuánto mira los pagos"}</span></pre>
             {" "}
             <p>
               La configuración se valida al arrancar: un valor fuera de rango frena el servicio en vez de dejarlo andar mal configurado.
@@ -702,11 +717,11 @@ export default function Operador() {
         </ul>
       </section>
       <div className="pager">
-        <a href="/usuario/">
-          ← Paso a paso del usuario
+        <a href="/comunidades/">
+          ← Community leaders
         </a>
-        <a href="/flujo/">
-          El swap en movimiento →
+        <a href="/desarrolladores/">
+          Desarrolladores →
         </a>
       </div>
     </>

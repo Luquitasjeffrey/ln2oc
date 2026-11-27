@@ -1,7 +1,24 @@
 import { AddressMaker } from "../components/AddressMaker";
 import { SwapLedger } from "../components/SwapLedger";
+import { communityFeeSat, fmt, pct, serviceFeeSat } from "../lib/fees";
+import { useInstanceInfo } from "../lib/info";
+
+const AUDIENCES: [string, string, string, string][] = [
+  ["/usuario/", "Usuarios", "Querés tus sats en frío",
+   "Recibís o te mandás sats por Lightning y llegan on-chain a tu cold wallet. Cómo armar tu Lightning Address, cuánto te llega y qué pasa si algo sale mal."],
+  ["/comunidades/", "Community leaders", "Tenés usuarios en Lightning",
+   "Corrés un exchange P2P, una wallet o un sistema de pagos. Les ofrecés retiro on-chain a tus usuarios sin construirlo y te llevás una parte de la comisión de cada swap."],
+  ["/operadores/", "Operadores", "Corrés tu propia instancia",
+   "Ponés el nodo y el capital en los dos lados, y ganás la comisión de cada swap. El capital, la liquidez, cómo reponer el saldo on-chain y cómo registrar comunidades."],
+  ["/desarrolladores/", "Desarrolladores", "Querés leer o integrar el código",
+   "El repo en GitHub, la API LNURL con el hook de comunidades, cómo correrlo y testearlo, la animación y la arquitectura."],
+]; // [href, who, headline, text]
 
 export default function Landing() {
+  const { info } = useInstanceInfo();
+  const amount = 100_000;
+  const fee = serviceFeeSat(amount, info.swap_fee_rate_bps);
+  const community = communityFeeSat(amount, info.community_fee_rate_bps);
   return (
     <>
       <header className="hero">
@@ -27,6 +44,21 @@ export default function Landing() {
           </span>
         </div>
       </header>
+      <section aria-labelledby="h-who">
+        <h2 id="h-who">
+          ¿Quién sos?
+        </h2>
+        <div className="chapters">
+          {AUDIENCES.map(([href, eyebrow, title, text]) => (
+            <a className="chapter" href={href} key={href}>
+              <span className="eyebrow">{eyebrow}</span>
+              <h3>{title}</h3>
+              <p>{text}</p>
+              <span className="go">{href} →</span>
+            </a>
+          ))}
+        </div>
+      </section>
       <section className="assumptions" aria-labelledby="h-sup">
         <div>
           <span className="eyebrow">
@@ -233,102 +265,36 @@ export default function Landing() {
           </ul>
         </div>
       </section>
-      <section aria-labelledby="h-comm">
-        <h2 id="h-comm">
-          Comunidades
-        </h2>
-        <p className="read">
-          Un exchange, una wallet o un sistema de pagos Lightning puede ofrecerles retiro on-chain a sus usuarios con ln2oc, sin reinventar la rueda. A cambio de acercarnos esos usuarios, la comunidad se lleva una parte de la comisión (0,1 % de cada swap, de los 0,7 %). Para el usuario no cambia nada: paga lo mismo y recibe lo mismo.
-        </p>
-        <p className="read" style={{ color: "var(--muted)" }}>
-          El modelo de comunidades está inspirado en{" "}
-          <a href="https://github.com/lnp2pBot/bot">
-            lnp2pBot
-          </a>
-          , de @negrunch.
-        </p>
-      </section>
-      <section aria-labelledby="h-ch">
-        <h2 id="h-ch">
-          Capítulos
-        </h2>
-        <div className="chapters">
-          <a className="chapter" href="/usuario/">
-            {" "}
-            <span className="eyebrow">
-              Para quien recibe o se auto-envía
-            </span>
-            {" "}
-            <h3>
-              Paso a paso del usuario
-            </h3>
-            {" "}
-            <p>
-              Cómo armar tu Lightning Address, qué ves en la wallet en cada momento, cuánto te llega y qué pasa si algo sale mal.
-            </p>
-            {" "}
-            <span className="go">
-              /usuario/ →
-            </span>
-            {" "}
-          </a>
-          <a className="chapter" href="/operadores/">
-            {" "}
-            <span className="eyebrow">
-              Para vos, que corrés el nodo
-            </span>
-            {" "}
-            <h3>
-              Paso a paso del operador
-            </h3>
-            {" "}
-            <p>
-              El capital on-chain y la liquidez entrante que necesitás para ser contraparte, cómo se mueve tu balance y cómo operar el servicio.
-            </p>
-            {" "}
-            <span className="go">
-              /operadores/ →
-            </span>
-            {" "}
-          </a>
-          <a className="chapter" href="/flujo/">
-            {" "}
-            <span className="eyebrow">
-              Animación
-            </span>
-            {" "}
-            <h3>
-              El swap en movimiento
-            </h3>
-            {" "}
-            <p>
-              La plata y el código, cuadro por cuadro: del HTLC retenido al bloque minado. También el caso sin saldo, con reembolso.
-            </p>
-            {" "}
-            <span className="go">
-              /flujo/ →
-            </span>
-            {" "}
-          </a>
-          <a className="chapter" href="/arquitectura/">
-            {" "}
-            <span className="eyebrow">
-              Código
-            </span>
-            {" "}
-            <h3>
-              Arquitectura
-            </h3>
-            {" "}
-            <p>
-              Qué módulo habla con quién, la máquina de estados, los hilos y las reglas que protegen los fondos.
-            </p>
-            {" "}
-            <span className="go">
-              /arquitectura/ →
-            </span>
-            {" "}
-          </a>
+      <section className="isolated comm" aria-labelledby="h-comm">
+        <div>
+          <span className="eyebrow">
+            Comunidades
+          </span>
+          <h2 id="h-comm" style={{ marginTop: "0.5rem" }}>
+            Tus usuarios retiran on-chain, vos te llevás una parte
+          </h2>
+        </div>
+        <div>
+          <p style={{ marginTop: "0" }}>
+            Un exchange, una wallet o un sistema de pagos Lightning puede ofrecerles retiro on-chain a sus usuarios con ln2oc, sin reinventar la rueda. A cambio de acercarnos esos usuarios, la comunidad se lleva una parte de la comisión. Para el usuario no cambia nada: paga lo mismo y recibe lo mismo.
+          </p>
+          <div className="table-wrap">
+            <table className="ledger">
+              <thead>
+                <tr><th>Comisión de un swap de {fmt(amount)} sats</th><th className="r">sats</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Operador ({pct(info.swap_fee_rate_bps - info.community_fee_rate_bps)})</td><td className="r">{fmt(fee - community)}</td></tr>
+                <tr><td>Comunidad ({pct(info.community_fee_rate_bps)})</td><td className="r ln">{fmt(community)}</td></tr>
+              </tbody>
+              <tfoot>
+                <tr><td>Total que paga el usuario ({pct(info.swap_fee_rate_bps)})</td><td className="r">{fmt(fee)}</td></tr>
+              </tfoot>
+            </table>
+          </div>
+          <p>
+            El modelo de comunidades está inspirado en <a href="https://github.com/lnp2pBot/bot">lnp2pBot</a>, de <a href="https://github.com/grunch">@grunch</a>. <a href="/comunidades/">Cómo crear una comunidad →</a>
+          </p>
         </div>
       </section>
       <section className="two" aria-label="Confianza y números">

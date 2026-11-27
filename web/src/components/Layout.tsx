@@ -1,14 +1,17 @@
 import type { ReactNode } from "react";
 import { useInstanceInfo } from "../lib/info";
 
-export type PageKey = "index" | "usuario" | "flujo" | "operadores" | "arquitectura";
+export type PageKey = "index" | "usuario" | "comunidades" | "operadores" | "desarrolladores" | "flujo" | "arquitectura";
 
+// Who the site is for, then how it works inside.
 const USER_LINKS: [PageKey, string, string][] = [
-  ["usuario", "/usuario/", "Cómo se usa"],
-  ["flujo", "/flujo/", "Animación"],
+  ["usuario", "/usuario/", "Usuarios"],
+  ["comunidades", "/comunidades/", "Community leaders"],
+  ["operadores", "/operadores/", "Operadores"],
+  ["desarrolladores", "/desarrolladores/", "Desarrolladores"],
 ];
 const OPERATOR_LINKS: [PageKey, string, string][] = [
-  ["operadores", "/operadores/", "Operadores"],
+  ["flujo", "/flujo/", "Animación"],
   ["arquitectura", "/arquitectura/", "Arquitectura"],
 ];
 
